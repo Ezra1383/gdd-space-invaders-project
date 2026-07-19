@@ -9,7 +9,15 @@ public class Alien1 extends Enemy {
 
     public Alien1(int x, int y) {
         super(x, y);
-        // initEnemy(x, y);
+        // Fly in from the right (Enemy.act() moves along dx until it reaches
+        // homeX, then holds — see Stage 5b).
+        this.dx = -4;
+        this.hp = 4; // takes a few hits before dying
+        // Danmaku firing (Stage 5a). Wave-assigned patterns come in Stage 5c;
+        // for now Alien1 fans bullets at the player on a timer.
+        this.firePattern = BulletPattern.FAN;
+        this.fireInterval = 110;
+        this.fireCooldown = 110;
     }
 
     private void initEnemy(int x, int y) {
@@ -28,9 +36,7 @@ public class Alien1 extends Enemy {
         setImage(scaledImage);
     }
 
-    public void act(int direction) {
-        this.y ++;
-    }
+    // act() is inherited from Enemy (x += dx).
 
     public Bomb getBomb() {
 
@@ -66,6 +72,10 @@ public class Alien1 extends Enemy {
         public boolean isDestroyed() {
 
             return destroyed;
+        }
+
+        public void act() {
+            // Not wired up yet — real enemy-fire patterns land in Stage 5.
         }
     }
 }

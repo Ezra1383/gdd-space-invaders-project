@@ -1,12 +1,12 @@
 package gdd.sprite;
 
 import static gdd.Global.*;
-import javax.swing.ImageIcon;
+import gdd.Images;
 
 public class Shot extends Sprite {
 
     private static final int H_SPACE = 20;
-    private static final int V_SPACE = 1;
+    private static final int SPEED = 20;
 
     public Shot() {
     }
@@ -18,15 +18,14 @@ public class Shot extends Sprite {
 
     private void initShot(int x, int y) {
 
-        var ii = new ImageIcon(IMG_SHOT);
-
-        // Scale the image to use the global scaling factor
-        var scaledImage = ii.getImage().getScaledInstance(ii.getIconWidth() * SCALE_FACTOR,
-                ii.getIconHeight() * SCALE_FACTOR, 
-                java.awt.Image.SCALE_SMOOTH);
-        setImage(scaledImage);
+        // Scaled via Images (ImageIO-backed) to dodge AWT's buggy PNG scaling.
+        setImage(Images.scaledBy(IMG_SHOT, SCALE_FACTOR));
 
         setX(x + H_SPACE);
-        setY(y - V_SPACE);
+        setY(y);
+    }
+
+    public void act() {
+        x += SPEED;
     }
 }

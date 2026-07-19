@@ -9,8 +9,8 @@ public class Global {
 
     public static final int BOARD_WIDTH = 716; // Doubled from 358
     public static final int BOARD_HEIGHT = 700; // Doubled from 350
-    public static final int BORDER_RIGHT = 60; // Doubled from 30
-    public static final int BORDER_LEFT = 10; // Doubled from 5
+    public static final int BORDER_BOTTOM = 60; // Doubled from 30
+    public static final int BORDER_TOP = 10; // Doubled from 5
 
     public static final int GROUND = 580; // Doubled from 290
     public static final int BOMB_HEIGHT = 10; // Doubled from 5
@@ -32,6 +32,7 @@ public class Global {
     public static final String IMG_ENEMY = "src/images/alien.png";
     public static final String IMG_PLAYER = "src/images/player.png";
     public static final String IMG_SHOT = "src/images/shot.png";
+    public static final String IMG_BOMB = "src/images/bomb.png";
     public static final String IMG_EXPLOSION = "src/images/explosion.png";
     public static final String IMG_TITLE = "src/images/title.png";
     public static final String IMG_POWERUP_SPEEDUP = "src/images/powerup-s.png";

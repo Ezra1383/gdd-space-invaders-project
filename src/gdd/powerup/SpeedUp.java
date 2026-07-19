@@ -1,8 +1,8 @@
 package gdd.powerup;
 
 import static gdd.Global.*;
+import gdd.Images;
 import gdd.sprite.Player;
-import javax.swing.ImageIcon;
 
 /*
  * Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
@@ -14,18 +14,14 @@ public class SpeedUp extends PowerUp {
 
     public SpeedUp(int x, int y) {
         super(x, y);
-        // Set image
-        ImageIcon ii = new ImageIcon(IMG_POWERUP_SPEEDUP);
-        var scaledImage = ii.getImage().getScaledInstance(ii.getIconWidth() ,
-                ii.getIconHeight() ,
-                java.awt.Image.SCALE_SMOOTH);
-        setImage(scaledImage);
+        // Loaded via Images (ImageIO-backed) to dodge AWT's buggy PNG scaling.
+        setImage(Images.load(IMG_POWERUP_SPEEDUP));
     }
 
     public void act() {
         // SpeedUp specific behavior can be added here
-        // For now, it just moves down the screen
-        this.y += 2; // Move down by 2 pixel each frame
+        // For now, it just drifts left with the scroll
+        this.x -= 2; // Move left by 2 pixels each frame
     }
 
     public void upgrade(Player player) {

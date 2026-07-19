@@ -1,31 +1,25 @@
 package gdd.sprite;
 
 import static gdd.Global.*;
-import java.awt.Rectangle;
+import gdd.Images;
 import java.awt.event.KeyEvent;
-import javax.swing.ImageIcon;
 
 public class Player extends Sprite {
 
-    private static final int START_X = 270;
-    private static final int START_Y = 540;
-    private int width;
-    private int currentSpeed = 2;
-
-    private Rectangle bounds = new Rectangle(175,135,17,32);
+    private static final int START_X = 60;
+    private static final int START_Y = 340;
+    // Danmaku dodging zone: the player roams the left third of the board in 2D.
+    private static final int ZONE_MIN_X = 20;
+    private static final int ZONE_MAX_X = BOARD_WIDTH / 3;
+    private int currentSpeed = 4;
 
     public Player() {
         initPlayer();
     }
 
     private void initPlayer() {
-        var ii = new ImageIcon(IMG_PLAYER);
-
-        // Scale the image to use the global scaling factor
-        var scaledImage = ii.getImage().getScaledInstance(ii.getIconWidth() * SCALE_FACTOR,
-                ii.getIconHeight() * SCALE_FACTOR,
-                java.awt.Image.SCALE_SMOOTH);
-        setImage(scaledImage);
+        // Scaled via Images (ImageIO-backed) to dodge AWT's buggy PNG scaling.
+        setImage(Images.scaledBy(IMG_PLAYER, SCALE_FACTOR));
 
         setX(START_X);
         setY(START_Y);
@@ -45,18 +39,38 @@ public class Player extends Sprite {
 
     public void act() {
         x += dx;
+        y += dy;
 
-        if (x <= 2) {
-            x = 2;
+        int rightBound = ZONE_MAX_X - getImage().getWidth(null);
+        int bottomBound = BOARD_HEIGHT - BORDER_BOTTOM - getImage().getHeight(null);
+
+        if (x <= ZONE_MIN_X) {
+            x = ZONE_MIN_X;
         }
 
-        if (x >= BOARD_WIDTH - 2 * width) {
-            x = BOARD_WIDTH - 2 * width;
+        if (x >= rightBound) {
+            x = rightBound;
+        }
+
+        if (y <= BORDER_TOP) {
+            y = BORDER_TOP;
+        }
+
+        if (y >= bottomBound) {
+            y = bottomBound;
         }
     }
 
     public void keyPressed(KeyEvent e) {
         int key = e.getKeyCode();
+
+        if (key == KeyEvent.VK_UP) {
+            dy = -currentSpeed;
+        }
+
+        if (key == KeyEvent.VK_DOWN) {
+            dy = currentSpeed;
+        }
 
         if (key == KeyEvent.VK_LEFT) {
             dx = -currentSpeed;
@@ -69,6 +83,14 @@ public class Player extends Sprite {
 
     public void keyReleased(KeyEvent e) {
         int key = e.getKeyCode();
+
+        if (key == KeyEvent.VK_UP) {
+            dy = 0;
+        }
+
+        if (key == KeyEvent.VK_DOWN) {
+            dy = 0;
+        }
 
         if (key == KeyEvent.VK_LEFT) {
             dx = 0;
