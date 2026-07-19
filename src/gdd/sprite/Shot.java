@@ -1,31 +1,36 @@
 package gdd.sprite;
 
-import static gdd.Global.*;
-import gdd.Images;
+import java.awt.Image;
 
+/**
+ * A player shot. Carries a floating-point velocity so weapon tiers can fire at
+ * angles (spread), and takes its sprite from the caller so each tier can look
+ * different. Spawned centred on (cx, cy).
+ */
 public class Shot extends Sprite {
 
-    private static final int H_SPACE = 20;
-    private static final int SPEED = 20;
+    private double fx;
+    private double fy;
+    private final double vx;
+    private final double vy;
 
-    public Shot() {
+    public Shot(int cx, int cy, double vx, double vy, Image img) {
+        setImage(img);
+        int w = img.getWidth(null);
+        int h = img.getHeight(null);
+        this.fx = cx - w / 2.0;
+        this.fy = cy - h / 2.0;
+        this.vx = vx;
+        this.vy = vy;
+        this.x = (int) fx;
+        this.y = (int) fy;
     }
 
-    public Shot(int x, int y) {
-
-        initShot(x, y);
-    }
-
-    private void initShot(int x, int y) {
-
-        // Scaled via Images (ImageIO-backed) to dodge AWT's buggy PNG scaling.
-        setImage(Images.scaledBy(IMG_SHOT, SCALE_FACTOR));
-
-        setX(x + H_SPACE);
-        setY(y);
-    }
-
+    @Override
     public void act() {
-        x += SPEED;
+        fx += vx;
+        fy += vy;
+        x = (int) fx;
+        y = (int) fy;
     }
 }

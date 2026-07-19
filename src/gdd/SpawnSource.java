@@ -12,8 +12,10 @@ import java.util.List;
 public interface SpawnSource {
 
     /**
-     * @param frame the current frame number
+     * @param frame        the current frame number
+     * @param aliveEnemies how many enemies are currently on the field (lets a
+     *                     wave-gated source hold the next wave until this is 0)
      * @return the spawns that should be created this frame (empty if none)
      */
-    List<SpawnDetails> poll(int frame);
+    List<SpawnDetails> poll(int frame, int aliveEnemies);
 }

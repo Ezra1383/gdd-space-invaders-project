@@ -9,6 +9,7 @@ import gdd.SpawnDetails;
 import gdd.SpawnSource;
 import gdd.powerup.PowerUp;
 import gdd.powerup.SpeedUp;
+import gdd.powerup.WeaponUp;
 import gdd.sprite.Alien1;
 import gdd.sprite.Bullet;
 import gdd.sprite.Enemy;
@@ -22,6 +23,7 @@ import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.Image;
 import java.awt.Toolkit;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -47,9 +49,17 @@ public class Scene1 extends JPanel {
     final int BLOCKHEIGHT = 50;
     final int BLOCKWIDTH = 50;
 
-    // Interim cap on concurrent enemies (Stage 5b). Replaced by wave-clear
-    // gating in Stage 5c.
-    private static final int MAX_ALIVE_ENEMIES = 6;
+    // Weapon-tier bullet sprites, cut from the sheet (keyed transparent).
+    private static final int[] BKEYS = {0x003663, 0x464646, 0x000000};
+    private static final Image BULLET_PELLET = Images.tile(IMG_SPRITES, 246, 12, 12, 7, 2, BKEYS, 40);
+    // Round, symmetric orb (no facing) so angled/rightward shots never look reversed.
+    private static final Image BULLET_ORB = Images.tile(IMG_SPRITES, 288, 36, 10, 9, 3, BKEYS, 40);
+    private static final Image BULLET_COMET = Images.tile(IMG_SPRITES, 380, 7, 29, 19, 2, BKEYS, 40);
+    private static final double SHOT_SPEED = 12;
+    private static final int FIRE_INTERVAL = 9; // frames between volleys while firing
+
+    private boolean firing = false;
+    private int fireTimer = 0;
 
     private int deaths = 0;
 
@@ -61,6 +71,10 @@ public class Scene1 extends JPanel {
     // for a fresh, varied run each launch.
     private static final long RUN_SEED = 20260719L;
     private final Random randomizer = new Random(RUN_SEED);
+    // Independent stream for kill-drop rolls, so drops don't perturb the
+    // Director's wave generation.
+    private final Random dropRng = new Random(RUN_SEED + 1337);
+    private static final int POWERUP_DROP_PERCENT = 20;
 
     private Timer timer;
     private final Game game;
@@ -348,6 +362,9 @@ public class Scene1 extends JPanel {
         g.setColor(Color.white);
         g.drawString("FRAME: " + frame, 10, 10);
         g.drawString("KILLS: " + deaths, 10, 24);
+        if (player != null) {
+            g.drawString("WEAPON: Lv " + player.getWeaponLevel() + "  SPEED: " + player.getSpeed(), 10, 38);
+        }
 
         g.setColor(Color.green);
 
@@ -395,15 +412,10 @@ public class Scene1 extends JPanel {
     private void update() {
 
 
-        // Check spawns for this frame (may be several). Bosses always spawn;
-        // trash enemies are throttled by an interim alive-cap so holding enemies
-        // don't flood the screen. (Stage 5c replaces this with real wave-clear
-        // gating.)
-        for (SpawnDetails sd : spawnSource.poll(frame)) {
-            boolean isEnemy = "Alien1".equals(sd.type) || "Alien2".equals(sd.type);
-            if (isEnemy && enemies.size() >= MAX_ALIVE_ENEMIES) {
-                continue;
-            }
+        // Check spawns for this frame (may be several). The Director gates waves
+        // on how many enemies are still alive, so it holds the next wave until
+        // the current one is cleared.
+        for (SpawnDetails sd : spawnSource.poll(frame, enemies.size())) {
             spawn(sd);
         }
 
@@ -412,6 +424,15 @@ public class Scene1 extends JPanel {
 
         // player
         player.act();
+
+        // Player weapon fire (held SPACE), paced by a cooldown.
+        if (fireTimer > 0) {
+            fireTimer--;
+        }
+        if (firing && fireTimer <= 0 && inGame) {
+            fireWeapon();
+            fireTimer = FIRE_INTERVAL;
+        }
 
         // Power-ups
         for (PowerUp powerup : powerups) {
@@ -475,13 +496,25 @@ public class Scene1 extends JPanel {
                             enemy.setDying(true);
                             explosions.add(new Explosion(enemyX, enemyY));
                             deaths++;
+
+                            // Random powerup drop on kill — the only way to get
+                            // powerups now. Mixed: mostly weapon-ups, some speed.
+                            // Drifts left toward the player.
+                            if (dropRng.nextInt(100) < POWERUP_DROP_PERCENT) {
+                                if (dropRng.nextInt(100) < 55) {
+                                    powerups.add(new WeaponUp(enemyX, enemyY));
+                                } else {
+                                    powerups.add(new SpeedUp(enemyX, enemyY));
+                                }
+                            }
                         }
                     }
                 }
 
                 shot.act();
 
-                if (shot.getX() > BOARD_WIDTH) {
+                if (shot.getX() > BOARD_WIDTH || shot.getY() < -20
+                        || shot.getY() > BOARD_HEIGHT + 20) {
                     shot.die();
                     shotsToRemove.add(shot);
                 }
@@ -613,29 +646,43 @@ public class Scene1 extends JPanel {
         @Override
         public void keyReleased(KeyEvent e) {
             player.keyReleased(e);
+            if (e.getKeyCode() == KeyEvent.VK_SPACE) {
+                firing = false;
+            }
         }
 
         @Override
         public void keyPressed(KeyEvent e) {
-            System.out.println("Scene2.keyPressed: " + e.getKeyCode());
-
             player.keyPressed(e);
-
-            int x = player.getX();
-            int y = player.getY();
-
-            int key = e.getKeyCode();
-
-            if (key == KeyEvent.VK_SPACE && inGame) {
-                System.out.println("Shots: " + shots.size());
-                if (shots.size() < 4) {
-                    // Create a new shot, vertically centered on the player
-                    int shotY = y + player.getImage().getHeight(null) / 2;
-                    Shot shot = new Shot(x, shotY);
-                    shots.add(shot);
-                }
+            if (e.getKeyCode() == KeyEvent.VK_SPACE) {
+                firing = true; // actual firing cadence is handled in update()
             }
+        }
+    }
 
+    // Fires the current weapon tier: sprite and shot pattern both scale up.
+    private void fireWeapon() {
+        int px = player.getX() + player.getImage().getWidth(null);
+        int py = player.getY() + player.getImage().getHeight(null) / 2;
+        switch (player.getWeaponLevel()) {
+            case 1: // single pellet
+                shots.add(new Shot(px, py, SHOT_SPEED, 0, BULLET_PELLET));
+                break;
+            case 2: // single orb
+                shots.add(new Shot(px, py, SHOT_SPEED, 0, BULLET_ORB));
+                break;
+            case 3: // twin orbs
+                shots.add(new Shot(px, py - 9, SHOT_SPEED, 0, BULLET_ORB));
+                shots.add(new Shot(px, py + 9, SHOT_SPEED, 0, BULLET_ORB));
+                break;
+            case 4: // 3-way spread
+                shots.add(new Shot(px, py, SHOT_SPEED, 0, BULLET_ORB));
+                shots.add(new Shot(px, py, SHOT_SPEED, -3, BULLET_ORB));
+                shots.add(new Shot(px, py, SHOT_SPEED, 3, BULLET_ORB));
+                break;
+            default: // tier 5: big plasma beam
+                shots.add(new Shot(px, py, SHOT_SPEED + 3, 0, BULLET_COMET));
+                break;
         }
     }
 }

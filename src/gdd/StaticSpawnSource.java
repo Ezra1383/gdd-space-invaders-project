@@ -24,7 +24,7 @@ public class StaticSpawnSource implements SpawnSource {
     }
 
     @Override
-    public List<SpawnDetails> poll(int frame) {
+    public List<SpawnDetails> poll(int frame, int aliveEnemies) {
         List<SpawnDetails> due = null;
         // <= (not ==) so a frame the scene never lands on exactly still flushes.
         while (nextIndex < spawns.size() && spawns.get(nextIndex).frame <= frame) {

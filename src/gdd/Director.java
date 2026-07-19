@@ -8,18 +8,18 @@ import java.util.PriorityQueue;
 import java.util.Random;
 
 /**
- * Runtime spawn generator (Stage 4). Implements {@link SpawnSource} so it drops
- * straight into Scene1 in place of the static list, with no change to the scene
- * loop.
+ * Runtime wave sequencer (Stage 5c). Implements {@link SpawnSource} so it drops
+ * straight into Scene1 in place of the static list.
  *
- * The run is an endless, escalating timeline made of {@link Phase}s. Within a
- * phase a difficulty <em>budget</em> accrues over time and is spent on spawn
- * {@link Formation}s drawn from the phase's allowed set. Each phase ends in a
- * <em>boss gate</em>: the RNG picks one boss from that phase's hand-authored
- * pool. After the last authored phase the Director loops the final one, scaling
- * difficulty each lap, so bosses keep arriving forever.
+ * The run is an endless, escalating timeline made of {@link Phase}s. Enemies
+ * arrive in discrete <em>waves</em>: a wave flies in and holds, and no new wave
+ * is released until the player has cleared the current one (Scene1 reports how
+ * many enemies are still alive). A short breather separates waves. Independently,
+ * each phase ends in a time-based <em>boss gate</em> that picks one boss from the
+ * phase's hand-authored pool. After the last authored phase the Director loops
+ * the final one, scaling difficulty each lap.
  *
- * Engine (this budget/phase/gate logic) and data (the phase list in
+ * Engine (this wave/phase/gate logic) and data (the phase list in
  * {@link #buildRun()}) are kept separate on purpose: Stage 6 "biome variety"
  * swaps the data, not the engine.
  */
@@ -35,8 +35,14 @@ public class Director implements SpawnSource {
      */
     private static final int PHASE_FRAMES = 1500; // ~25s for testing
 
-    /** Ceiling on banked budget, so a boss-quiet lull doesn't hoard a flood. */
-    private static final double BUDGET_CAP = 80;
+    /** Breather (frames) between clearing a wave and the next one arriving. */
+    private static final int WAVE_GAP = 40;
+    /** Wave "size budget" spent on formations; grows each wave. */
+    private static final double WAVE_BASE_BUDGET = 20;
+    private static final double WAVE_GROWTH = 6;      // added per wave cleared
+    private static final double WAVE_BUDGET_CAP = 120;
+    /** Hard ceiling on enemies per wave, so a wave never floods the screen. */
+    private static final int MAX_WAVE_ENEMIES = 10;
 
     /** Keep formations clear of the top/bottom edges. */
     private static final int MARGIN_Y = 60;
@@ -45,8 +51,6 @@ public class Director implements SpawnSource {
     private static final int HOLD_MAX_X = BOARD_WIDTH - 120;
     /** Vertical gap between enemies within a formation. */
     private static final int SPACING = 55;
-    /** Brief calm after a boss gate fires. */
-    private static final int BOSS_QUIET_FRAMES = 120;
 
     private final Random rng;
     private final List<Phase> phases;
@@ -58,9 +62,11 @@ public class Director implements SpawnSource {
     private int phaseIndex = 0;
     private int phaseStartFrame = 0;
     private int loops = 0;              // laps past the last authored phase
-    private double budget = 0;
-    private int lastSpawnFrame = -10000;
-    private int quietUntilFrame = 0;
+
+    private boolean waveActive = false;
+    private int pendingWaveCount = 0;  // wave enemies not yet emitted from `pending`
+    private int nextWaveFrame = 0;     // earliest frame the next wave may start
+    private int waveIndex = 0;         // waves started so far (drives escalation)
 
     public Director(Random rng) {
         this.rng = rng;
@@ -69,33 +75,27 @@ public class Director implements SpawnSource {
     }
 
     @Override
-    public List<SpawnDetails> poll(int frame) {
+    public List<SpawnDetails> poll(int frame, int aliveEnemies) {
+        // 1. Boss gate — time-based, fires regardless of the current wave.
         Phase phase = currentPhase();
-
-        // 1. Boss gate — has this phase's time elapsed?
         if (frame - phaseStartFrame >= phase.durationFrames) {
             fireBossGate(frame, phase);
             advancePhase(frame);
-            phase = currentPhase();
         }
 
-        // 2. Grow the difficulty budget. The rate rises within the phase (a
-        //    crescendo toward the boss) and across loops (endless escalation).
-        double phaseProgress = (double) (frame - phaseStartFrame) / phase.durationFrames;
-        budget += phase.budgetPerFrame * (1.0 + phaseProgress) * (1.0 + 0.5 * loops);
-        budget = Math.min(budget, BUDGET_CAP);
-
-        // 3. Maybe emit a formation, if off cooldown and past any boss quiet time.
-        if (frame >= quietUntilFrame && frame - lastSpawnFrame >= phase.minSpawnGap) {
-            Formation f = pickAffordableFormation(phase);
-            if (f != null) {
-                budget -= f.cost;
-                lastSpawnFrame = frame;
-                pending.addAll(f.build(rng, frame));
-            }
+        // 2. Wave cleared? (every wave enemy has been emitted AND none remain)
+        if (waveActive && pendingWaveCount == 0 && aliveEnemies == 0) {
+            waveActive = false;
+            waveIndex++;
+            nextWaveFrame = frame + WAVE_GAP;
         }
 
-        // 4. Drain everything due on or before this frame.
+        // 3. Release the next wave once the breather has passed.
+        if (!waveActive && frame >= nextWaveFrame) {
+            spawnWave(frame);
+        }
+
+        // 4. Emit spawns due on or before this frame.
         return drain(frame);
     }
 
@@ -106,12 +106,47 @@ public class Director implements SpawnSource {
     private List<SpawnDetails> drain(int frame) {
         List<SpawnDetails> due = null;
         while (!pending.isEmpty() && pending.peek().frame <= frame) {
+            SpawnDetails sd = pending.poll();
+            if (!sd.type.startsWith("BOSS:")) {
+                pendingWaveCount--; // a wave enemy has now been emitted
+            }
             if (due == null) {
                 due = new ArrayList<>();
             }
-            due.add(pending.poll());
+            due.add(sd);
         }
         return due == null ? List.of() : due;
+    }
+
+    /** Builds the next wave by spending a size budget on the phase's formations. */
+    private void spawnWave(int frame) {
+        double wb = waveBudget();
+        int count = 0;
+        while (count < MAX_WAVE_ENEMIES) {
+            Formation f = pickAffordableFormation(currentPhase(), wb);
+            if (f == null) {
+                break;
+            }
+            wb -= f.cost;
+            List<SpawnDetails> spawns = f.build(rng, frame);
+            pending.addAll(spawns);
+            count += spawns.size();
+        }
+        if (count == 0) { // safety: never release an empty wave
+            List<SpawnDetails> s = Formation.SINGLE.build(rng, frame);
+            pending.addAll(s);
+            count = s.size();
+        }
+        pendingWaveCount = count;
+        waveActive = true;
+        System.out.println("[Director] wave " + waveIndex + " (" + currentPhase().name
+                + ") — " + count + " enemies");
+    }
+
+    private double waveBudget() {
+        double base = WAVE_BASE_BUDGET + waveIndex * WAVE_GROWTH;
+        double b = base * currentPhase().waveBudgetMult * (1.0 + 0.4 * loops);
+        return Math.min(b, WAVE_BUDGET_CAP);
     }
 
     private void fireBossGate(int frame, Phase phase) {
@@ -120,13 +155,12 @@ public class Director implements SpawnSource {
                 + boss + "\" from " + phase.bossPool);
         // Bosses aren't implemented yet (Stage 5+). Route through the normal
         // spawn path as a placeholder so the wiring is real and testable now.
+        // (A real boss will be an enemy that blocks wave progression until killed.)
         pending.add(new SpawnDetails(frame, "BOSS:" + boss, BOARD_WIDTH, BOARD_HEIGHT / 2));
-        quietUntilFrame = frame + BOSS_QUIET_FRAMES;
     }
 
     private void advancePhase(int frame) {
         phaseStartFrame = frame;
-        budget = 0;
         if (phaseIndex < phases.size() - 1) {
             phaseIndex++;
         } else {
@@ -136,8 +170,8 @@ public class Director implements SpawnSource {
                 + (loops > 0 ? " (loop " + loops + ")" : ""));
     }
 
-    /** Weighted pick among the phase's formations we can currently afford. */
-    private Formation pickAffordableFormation(Phase phase) {
+    /** Weighted pick among the phase's formations affordable within `budget`. */
+    private Formation pickAffordableFormation(Phase phase, double budget) {
         int totalWeight = 0;
         for (Formation f : phase.formations) {
             if (f.cost <= budget) {
@@ -163,14 +197,13 @@ public class Director implements SpawnSource {
 
     private List<Phase> buildRun() {
         List<Phase> list = new ArrayList<>();
-        // Phase 1 — gentle approach: singles, some columns, the odd powerup.
-        list.add(new Phase("Approach", PHASE_FRAMES, 0.6, 45,
-                List.of(Formation.SINGLE, Formation.COLUMN, Formation.POWERUP),
+        // Phase 1 — gentle approach: small waves of singles and columns.
+        list.add(new Phase("Approach", PHASE_FRAMES, 1.0,
+                List.of(Formation.SINGLE, Formation.COLUMN),
                 List.of("Warden", "Hive-Mother", "Sentinel")));
-        // Phase 2 — onslaught: denser, adds waves and V-formations.
-        list.add(new Phase("Onslaught", PHASE_FRAMES, 1.0, 35,
-                List.of(Formation.SINGLE, Formation.COLUMN, Formation.WAVE,
-                        Formation.VEE, Formation.POWERUP),
+        // Phase 2 — onslaught: bigger waves, adds waves and V-formations.
+        list.add(new Phase("Onslaught", PHASE_FRAMES, 1.4,
+                List.of(Formation.SINGLE, Formation.COLUMN, Formation.WAVE, Formation.VEE),
                 List.of("Leviathan", "Swarm-Lord", "Dreadnought")));
         return list;
     }
@@ -179,24 +212,22 @@ public class Director implements SpawnSource {
     private static final class Phase {
         final String name;
         final int durationFrames;
-        final double budgetPerFrame;
-        final int minSpawnGap;              // min frames between formations
+        final double waveBudgetMult;        // scales wave size for this phase
         final List<Formation> formations;   // allowed spawn shapes this phase
         final List<String> bossPool;        // one is chosen when the phase ends
 
-        Phase(String name, int durationFrames, double budgetPerFrame, int minSpawnGap,
+        Phase(String name, int durationFrames, double waveBudgetMult,
               List<Formation> formations, List<String> bossPool) {
             this.name = name;
             this.durationFrames = durationFrames;
-            this.budgetPerFrame = budgetPerFrame;
-            this.minSpawnGap = minSpawnGap;
+            this.waveBudgetMult = waveBudgetMult;
             this.formations = formations;
             this.bossPool = bossPool;
         }
     }
 
     /**
-     * A spawn shape — the unit of the Director's output. Each builds a group of
+     * A spawn shape — the building block of a wave. Each builds a group of
      * {@link SpawnDetails}, some staggered across future frames. Formations are
      * about spawn <em>geometry</em>; in-flight movement/fire patterns are Stage 5.
      */
@@ -204,8 +235,7 @@ public class Director implements SpawnSource {
         SINGLE(10, 40),
         COLUMN(30, 25),
         WAVE(40, 20),
-        VEE(35, 12),
-        POWERUP(15, 10);
+        VEE(35, 12);
 
         final int cost;
         final int weight;
@@ -253,10 +283,6 @@ public class Director implements SpawnSource {
                     out.add(alien(frame + 8, cy + 2 * SPACING, home + 20));
                     break;
                 }
-                case POWERUP:
-                    out.add(new SpawnDetails(frame, "PowerUp-SpeedUp",
-                            BOARD_WIDTH, randRange(rng, minY, maxY)));
-                    break;
             }
             return out;
         }
