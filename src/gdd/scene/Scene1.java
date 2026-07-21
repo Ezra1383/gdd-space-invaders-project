@@ -10,9 +10,10 @@ import gdd.SpawnSource;
 import gdd.powerup.PowerUp;
 import gdd.powerup.SpeedUp;
 import gdd.powerup.WeaponUp;
-import gdd.sprite.Alien1;
+import gdd.sprite.Boss;
 import gdd.sprite.Bullet;
 import gdd.sprite.Enemy;
+import gdd.sprite.EnemyType;
 import gdd.sprite.Explosion;
 import gdd.sprite.Player;
 import gdd.sprite.Shot;
@@ -60,6 +61,12 @@ public class Scene1 extends JPanel {
 
     private boolean firing = false;
     private int fireTimer = 0;
+
+    // Boss fight (Stage 7).
+    private static final int BOSS_HP = 120;
+    private Boss activeBoss;
+    private int bossBannerTimer = 0;
+    private int bossesBeaten = 0;
 
     private int deaths = 0;
 
@@ -179,6 +186,24 @@ public class Scene1 extends JPanel {
         // }
         player = new Player();
         // shot = new Shot();
+    }
+
+    // Resets the whole run after a Game Over so the player can play again.
+    private void restart() {
+        frame = 0;
+        deaths = 0;
+        bossesBeaten = 0;
+        activeBoss = null;
+        bossBannerTimer = 0;
+        firing = false;
+        fireTimer = 0;
+        message = "Game Over";
+        inGame = true;
+        loadSpawnDetails(); // fresh Director
+        gameInit();         // fresh player + entity lists
+        if (!timer.isRunning()) {
+            timer.start();
+        }
     }
 
     private void drawMap(Graphics g) {
@@ -319,6 +344,32 @@ public class Scene1 extends JPanel {
         }
     }
 
+    private void drawBoss(Graphics g) {
+        // HP bar while the boss is on the field.
+        if (activeBoss != null && activeBoss.isVisible()) {
+            int barW = BOARD_WIDTH - 120;
+            int barH = 12;
+            int bx = 60;
+            int by = 54;
+            double frac = Math.max(0, activeBoss.getHp() / (double) activeBoss.getMaxHp());
+            g.setColor(Color.DARK_GRAY);
+            g.fillRect(bx, by, barW, barH);
+            g.setColor(Color.RED);
+            g.fillRect(bx, by, (int) (barW * frac), barH);
+            g.setColor(Color.WHITE);
+            g.drawRect(bx, by, barW, barH);
+            g.drawString("BOSS: " + activeBoss.getName(), bx, by - 4);
+        }
+        // Intro warning banner.
+        if (bossBannerTimer > 0) {
+            var f = new Font("Helvetica", Font.BOLD, 22);
+            g.setFont(f);
+            g.setColor(Color.RED);
+            String msg = "!! WARNING - BOSS APPROACHING !!";
+            g.drawString(msg, (BOARD_WIDTH - getFontMetrics(f).stringWidth(msg)) / 2, 110);
+        }
+    }
+
     private void drawBombing(Graphics g) {
 
         // for (Enemy e : enemies) {
@@ -377,6 +428,7 @@ public class Scene1 extends JPanel {
             drawEnemyBullets(g);
             drawPlayer(g);
             drawShot(g);
+            drawBoss(g);
 
         } else {
 
@@ -395,18 +447,32 @@ public class Scene1 extends JPanel {
         g.setColor(Color.black);
         g.fillRect(0, 0, BOARD_WIDTH, BOARD_HEIGHT);
 
-        g.setColor(new Color(0, 32, 48));
-        g.fillRect(50, BOARD_WIDTH / 2 - 30, BOARD_WIDTH - 100, 50);
-        g.setColor(Color.white);
-        g.drawRect(50, BOARD_WIDTH / 2 - 30, BOARD_WIDTH - 100, 50);
+        int cy = BOARD_HEIGHT / 2;
 
-        var small = new Font("Helvetica", Font.BOLD, 14);
-        var fontMetrics = this.getFontMetrics(small);
+        // Title
+        var big = new Font("Helvetica", Font.BOLD, 40);
+        g.setFont(big);
+        g.setColor(Color.red);
+        drawCentered(g, message, cy - 120, big);
 
+        // Score lines
+        var mid = new Font("Helvetica", Font.BOLD, 20);
+        g.setFont(mid);
         g.setColor(Color.white);
+        drawCentered(g, "Kills: " + deaths, cy - 50, mid);
+        drawCentered(g, "Time survived: " + (frame / 60) + "s", cy - 20, mid);
+        drawCentered(g, "Bosses beaten: " + bossesBeaten, cy + 10, mid);
+
+        // Prompt (timer is stopped here, so frame is frozen — keep it static).
+        var small = new Font("Helvetica", Font.BOLD, 18);
         g.setFont(small);
-        g.drawString(message, (BOARD_WIDTH - fontMetrics.stringWidth(message)) / 2,
-                BOARD_WIDTH / 2);
+        g.setColor(Color.yellow);
+        drawCentered(g, "Press SPACE to play again", cy + 70, small);
+    }
+
+    private void drawCentered(Graphics g, String text, int y, Font font) {
+        int w = getFontMetrics(font).stringWidth(text);
+        g.drawString(text, (BOARD_WIDTH - w) / 2, y);
     }
 
     private void update() {
@@ -522,6 +588,23 @@ public class Scene1 extends JPanel {
         }
         shots.removeAll(shotsToRemove);
 
+        // Boss lifecycle: count down the intro banner, and on boss death drop a
+        // big reward (several powerups) plus extra explosions.
+        if (bossBannerTimer > 0) {
+            bossBannerTimer--;
+        }
+        if (activeBoss != null && activeBoss.isDying()) {
+            int bx = activeBoss.getX() + activeBoss.getImage().getWidth(null) / 2;
+            int by = activeBoss.getY() + activeBoss.getImage().getHeight(null) / 2;
+            powerups.add(new WeaponUp(bx, by - 50));
+            powerups.add(new WeaponUp(bx, by + 50));
+            powerups.add(new SpeedUp(bx, by));
+            explosions.add(new Explosion(bx - 40, by - 30));
+            explosions.add(new Explosion(bx + 20, by + 20));
+            activeBoss = null;
+            bossesBeaten++;
+        }
+
         // Cull dead enemies and any that have drifted off the left edge, so the
         // lists don't grow without bound over an endless run.
         enemies.removeIf(e -> !e.isVisible()
@@ -601,30 +684,25 @@ public class Scene1 extends JPanel {
     // spawn-type logic lives, shared by the static source now and the Stage 4
     // Director later.
     private void spawn(SpawnDetails sd) {
-        // Boss gate placeholder — bosses aren't implemented yet (Stage 5+). The
-        // Director has already picked one; we just surface it for now.
+        // Boss gate — spawn a real boss that holds back the next wave until killed.
         if (sd.type.startsWith("BOSS:")) {
-            System.out.println(">>> BOSS INCOMING: " + sd.type.substring(5)
-                    + " (not implemented yet)");
+            String name = sd.type.substring(5);
+            Boss boss = new Boss(name, sd.x, sd.y, BOSS_HP);
+            boss.setHomeX(BOARD_WIDTH - 200);
+            enemies.add(boss);
+            activeBoss = boss;
+            bossBannerTimer = 150;
+            System.out.println(">>> BOSS INCOMING: " + name);
             return;
         }
-        switch (sd.type) {
-            case "Alien1":
-                Alien1 alien = new Alien1(sd.x, sd.y);
-                alien.setHomeX(sd.targetX);
-                enemies.add(alien);
-                break;
-            // Add more cases for different enemy types if needed
-            case "Alien2":
-                // enemies.add(new Alien2(sd.x, sd.y));
-                break;
-            case "PowerUp-SpeedUp":
-                powerups.add(new SpeedUp(sd.x, sd.y));
-                break;
-            default:
-                System.out.println("Unknown enemy type: " + sd.type);
-                break;
+        if ("PowerUp-SpeedUp".equals(sd.type)) {
+            powerups.add(new SpeedUp(sd.x, sd.y));
+            return;
         }
+        // Otherwise it's an enemy: the type string names an EnemyType.
+        Enemy enemy = new Enemy(EnemyType.fromString(sd.type), sd.x, sd.y);
+        enemy.setHomeX(sd.targetX);
+        enemies.add(enemy);
     }
 
     private void doGameCycle() {
@@ -653,8 +731,16 @@ public class Scene1 extends JPanel {
 
         @Override
         public void keyPressed(KeyEvent e) {
+            int key = e.getKeyCode();
+            if (!inGame) {
+                // On the Game Over screen, SPACE restarts the run.
+                if (key == KeyEvent.VK_SPACE) {
+                    restart();
+                }
+                return;
+            }
             player.keyPressed(e);
-            if (e.getKeyCode() == KeyEvent.VK_SPACE) {
+            if (key == KeyEvent.VK_SPACE) {
                 firing = true; // actual firing cadence is handled in update()
             }
         }

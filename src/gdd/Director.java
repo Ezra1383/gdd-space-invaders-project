@@ -2,6 +2,7 @@ package gdd;
 
 import static gdd.Global.*;
 
+import gdd.sprite.EnemyType;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.PriorityQueue;
@@ -68,6 +69,9 @@ public class Director implements SpawnSource {
     private int nextWaveFrame = 0;     // earliest frame the next wave may start
     private int waveIndex = 0;         // waves started so far (drives escalation)
 
+    private boolean bossActive = false; // a boss fight is in progress
+    private boolean bossEngaged = false; // the boss has actually appeared on-field
+
     public Director(Random rng) {
         this.rng = rng;
         this.phases = buildRun();
@@ -76,26 +80,37 @@ public class Director implements SpawnSource {
 
     @Override
     public List<SpawnDetails> poll(int frame, int aliveEnemies) {
-        // 1. Boss gate — time-based, fires regardless of the current wave.
-        Phase phase = currentPhase();
-        if (frame - phaseStartFrame >= phase.durationFrames) {
-            fireBossGate(frame, phase);
-            advancePhase(frame);
+        // Boss gate — time-based. Fires only when no boss fight is already going.
+        if (!bossActive && frame - phaseStartFrame >= currentPhase().durationFrames) {
+            fireBossGate(frame, currentPhase());
+            bossActive = true;
+            bossEngaged = false;
         }
 
-        // 2. Wave cleared? (every wave enemy has been emitted AND none remain)
-        if (waveActive && pendingWaveCount == 0 && aliveEnemies == 0) {
-            waveActive = false;
-            waveIndex++;
-            nextWaveFrame = frame + WAVE_GAP;
+        if (bossActive) {
+            // Waves are held until the boss (and any stragglers) are cleared.
+            if (aliveEnemies > 0) {
+                bossEngaged = true; // boss has materialised on the field
+            }
+            if (bossEngaged && aliveEnemies == 0) {
+                bossActive = false;
+                waveActive = false;
+                advancePhase(frame);           // boss down → next phase
+                nextWaveFrame = frame + WAVE_GAP;
+            }
+        } else {
+            // Normal wave sequencing.
+            if (waveActive && pendingWaveCount == 0 && aliveEnemies == 0) {
+                waveActive = false;
+                waveIndex++;
+                nextWaveFrame = frame + WAVE_GAP;
+            }
+            if (!waveActive && frame >= nextWaveFrame) {
+                spawnWave(frame);
+            }
         }
 
-        // 3. Release the next wave once the breather has passed.
-        if (!waveActive && frame >= nextWaveFrame) {
-            spawnWave(frame);
-        }
-
-        // 4. Emit spawns due on or before this frame.
+        // Emit spawns due on or before this frame.
         return drain(frame);
     }
 
@@ -120,20 +135,24 @@ public class Director implements SpawnSource {
 
     /** Builds the next wave by spending a size budget on the phase's formations. */
     private void spawnWave(int frame) {
+        Phase phase = currentPhase();
         double wb = waveBudget();
         int count = 0;
         while (count < MAX_WAVE_ENEMIES) {
-            Formation f = pickAffordableFormation(currentPhase(), wb);
+            Formation f = pickAffordableFormation(phase, wb);
             if (f == null) {
                 break;
             }
             wb -= f.cost;
-            List<SpawnDetails> spawns = f.build(rng, frame);
+            // Each formation is a squad of one enemy type from the phase's pool.
+            EnemyType type = phase.enemyPool.get(rng.nextInt(phase.enemyPool.size()));
+            List<SpawnDetails> spawns = f.build(rng, frame, type.name());
             pending.addAll(spawns);
             count += spawns.size();
         }
         if (count == 0) { // safety: never release an empty wave
-            List<SpawnDetails> s = Formation.SINGLE.build(rng, frame);
+            List<SpawnDetails> s = Formation.SINGLE.build(rng, frame,
+                    phase.enemyPool.get(0).name());
             pending.addAll(s);
             count = s.size();
         }
@@ -197,13 +216,15 @@ public class Director implements SpawnSource {
 
     private List<Phase> buildRun() {
         List<Phase> list = new ArrayList<>();
-        // Phase 1 — gentle approach: small waves of singles and columns.
+        // Phase 1 — gentle approach: grunts and the odd darter.
         list.add(new Phase("Approach", PHASE_FRAMES, 1.0,
                 List.of(Formation.SINGLE, Formation.COLUMN),
+                List.of(EnemyType.GRUNT, EnemyType.DARTER),
                 List.of("Warden", "Hive-Mother", "Sentinel")));
-        // Phase 2 — onslaught: bigger waves, adds waves and V-formations.
+        // Phase 2 — onslaught: bigger waves, turrets join the pool.
         list.add(new Phase("Onslaught", PHASE_FRAMES, 1.4,
                 List.of(Formation.SINGLE, Formation.COLUMN, Formation.WAVE, Formation.VEE),
+                List.of(EnemyType.GRUNT, EnemyType.DARTER, EnemyType.TURRET),
                 List.of("Leviathan", "Swarm-Lord", "Dreadnought")));
         return list;
     }
@@ -214,14 +235,16 @@ public class Director implements SpawnSource {
         final int durationFrames;
         final double waveBudgetMult;        // scales wave size for this phase
         final List<Formation> formations;   // allowed spawn shapes this phase
+        final List<EnemyType> enemyPool;    // enemy types that can appear
         final List<String> bossPool;        // one is chosen when the phase ends
 
         Phase(String name, int durationFrames, double waveBudgetMult,
-              List<Formation> formations, List<String> bossPool) {
+              List<Formation> formations, List<EnemyType> enemyPool, List<String> bossPool) {
             this.name = name;
             this.durationFrames = durationFrames;
             this.waveBudgetMult = waveBudgetMult;
             this.formations = formations;
+            this.enemyPool = enemyPool;
             this.bossPool = bossPool;
         }
     }
@@ -245,7 +268,7 @@ public class Director implements SpawnSource {
             this.weight = weight;
         }
 
-        List<SpawnDetails> build(Random rng, int frame) {
+        List<SpawnDetails> build(Random rng, int frame, String type) {
             final int minY = MARGIN_Y;
             final int maxY = BOARD_HEIGHT - MARGIN_Y;
             // The column this formation holds at once it has flown in.
@@ -253,12 +276,12 @@ public class Director implements SpawnSource {
             List<SpawnDetails> out = new ArrayList<>();
             switch (this) {
                 case SINGLE:
-                    out.add(alien(frame, randRange(rng, minY, maxY), home));
+                    out.add(alien(type, frame, randRange(rng, minY, maxY), home));
                     break;
                 case COLUMN: {
                     int top = randRange(rng, minY, maxY - 3 * SPACING);
                     for (int i = 0; i < 4; i++) {
-                        out.add(alien(frame, top + i * SPACING, home));
+                        out.add(alien(type, frame, top + i * SPACING, home));
                     }
                     break;
                 }
@@ -270,17 +293,17 @@ public class Director implements SpawnSource {
                     int step = down ? SPACING : -SPACING;
                     for (int i = 0; i < 5; i++) {
                         // Slight diagonal hold so the wave doesn't stack in a line.
-                        out.add(alien(frame + i * 6, startY + i * step, home + i * 8));
+                        out.add(alien(type, frame + i * 6, startY + i * step, home + i * 8));
                     }
                     break;
                 }
                 case VEE: {
                     int cy = randRange(rng, minY + 2 * SPACING, maxY - 2 * SPACING);
-                    out.add(alien(frame, cy, home - 40));          // tip forward
-                    out.add(alien(frame + 4, cy - SPACING, home));
-                    out.add(alien(frame + 4, cy + SPACING, home));
-                    out.add(alien(frame + 8, cy - 2 * SPACING, home + 20));
-                    out.add(alien(frame + 8, cy + 2 * SPACING, home + 20));
+                    out.add(alien(type, frame, cy, home - 40));          // tip forward
+                    out.add(alien(type, frame + 4, cy - SPACING, home));
+                    out.add(alien(type, frame + 4, cy + SPACING, home));
+                    out.add(alien(type, frame + 8, cy - 2 * SPACING, home + 20));
+                    out.add(alien(type, frame + 8, cy + 2 * SPACING, home + 20));
                     break;
                 }
             }
@@ -288,8 +311,8 @@ public class Director implements SpawnSource {
         }
     }
 
-    private static SpawnDetails alien(int frame, int y, int homeX) {
-        return new SpawnDetails(frame, "Alien1", BOARD_WIDTH, y, homeX);
+    private static SpawnDetails alien(String type, int frame, int y, int homeX) {
+        return new SpawnDetails(frame, type, BOARD_WIDTH, y, homeX);
     }
 
     private static int randRange(Random rng, int lo, int hi) {

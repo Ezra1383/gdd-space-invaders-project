@@ -2,6 +2,7 @@ package gdd.scene;
 
 import gdd.AudioPlayer;
 import gdd.Game;
+import gdd.Images;
 import static gdd.Global.*;
 import java.awt.Color;
 import java.awt.Dimension;
@@ -12,7 +13,6 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
-import javax.swing.ImageIcon;
 import javax.swing.JPanel;
 import javax.swing.Timer;
 
@@ -38,6 +38,7 @@ public class TitleScene extends JPanel {
     public void start() {
         addKeyListener(new TAdapter());
         setFocusable(true);
+        requestFocusInWindow();
         setBackground(Color.black);
 
         timer = new Timer(1000 / 60, new GameCycle());
@@ -62,9 +63,7 @@ public class TitleScene extends JPanel {
     }
 
     private void initTitle() {
-        var ii = new ImageIcon(IMG_TITLE);
-        image = ii.getImage();
-
+        image = Images.load(IMG_TITLE);
     }
 
     private void initAudio() {
@@ -140,13 +139,9 @@ public class TitleScene extends JPanel {
 
         @Override
         public void keyPressed(KeyEvent e) {
-            System.out.println("Title.keyPressed: " + e.getKeyCode());
-            int key = e.getKeyCode();
-            if (key == KeyEvent.VK_SPACE) {
-                // Load the next scene
-                game.loadScene2();
+            if (e.getKeyCode() == KeyEvent.VK_SPACE) {
+                game.loadScene2(); // start the game
             }
-
         }
     }
 }

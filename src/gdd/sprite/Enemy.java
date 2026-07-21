@@ -7,8 +7,6 @@ import java.util.List;
 
 public class Enemy extends Sprite {
 
-    // private Bomb bomb;
-
     // Danmaku firing (Stage 5a). A null pattern means this enemy never shoots.
     protected BulletPattern firePattern = null;
     protected int fireInterval = 0;   // frames between volleys
@@ -26,15 +24,39 @@ public class Enemy extends Sprite {
     // Durability (Stage 5b). Enemies take a few hits; hitFlash drives a brief
     // white flash for feedback.
     protected int hp = 1;
+    protected int maxHp = 1;
     protected int hitFlash = 0;
 
-    public Enemy(int x, int y) {
+    public Enemy(EnemyType type, int x, int y) {
+        this.x = x;
+        this.y = y;
+        this.hp = type.hp;
+        this.maxHp = type.hp;
+        this.dx = type.dx;
+        this.firePattern = type.pattern;
+        this.fireInterval = type.fireInterval;
+        this.fireCooldown = type.fireInterval;
+        // Recoloured/scaled variant of the shared base sprite (swap art later).
+        setImage(Images.scaledTinted(IMG_ENEMY, SCALE_FACTOR * type.scale,
+                type.tintR, type.tintG, type.tintB));
+    }
 
-        initEnemy(x, y);
+    /** Constructor for special enemies (e.g. Boss) that configure themselves. */
+    protected Enemy(int x, int y) {
+        this.x = x;
+        this.y = y;
     }
 
     public void setHomeX(int homeX) {
         this.homeX = homeX;
+    }
+
+    public int getHp() {
+        return hp;
+    }
+
+    public int getMaxHp() {
+        return maxHp;
     }
 
     /** Applies one hit. Returns true if this hit destroys the enemy. */
@@ -67,17 +89,6 @@ public class Enemy extends Sprite {
         return volley;
     }
 
-    private void initEnemy(int x, int y) {
-
-        this.x = x;
-        this.y = y;
-
-        // bomb = new Bomb(x, y);
-
-        // Scaled via Images (ImageIO-backed) to dodge AWT's buggy PNG scaling.
-        setImage(Images.scaledBy(IMG_ENEMY, SCALE_FACTOR));
-    }
-
     public void act() {
 
         if (hitFlash > 0) {
@@ -99,42 +110,4 @@ public class Enemy extends Sprite {
             y = homeY + (int) Math.round(Math.sin(idleTick * 0.05) * BOB_AMP);
         }
     }
-/* 
-    public Bomb getBomb() {
-
-        return bomb;
-    }
-
-    public class Bomb extends Sprite {
-
-        private boolean destroyed;
-
-        public Bomb(int x, int y) {
-
-            initBomb(x, y);
-        }
-
-        private void initBomb(int x, int y) {
-
-            setDestroyed(true);
-
-            this.x = x;
-            this.y = y;
-
-            var bombImg = "src/images/bomb.png";
-            var ii = new ImageIcon(bombImg);
-            setImage(ii.getImage());
-        }
-
-        public void setDestroyed(boolean destroyed) {
-
-            this.destroyed = destroyed;
-        }
-
-        public boolean isDestroyed() {
-
-            return destroyed;
-        }
-    }
-*/
 }

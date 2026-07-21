@@ -35,6 +35,31 @@ public final class Images {
         return scale(src, src.getWidth() * factor, src.getHeight() * factor);
     }
 
+    /**
+     * Loads an image, multiplies its RGB channels by the given tint (alpha
+     * preserved), and scales it by a floating factor. Used to spin enemy-type
+     * variants off a single base sprite (e.g. alien.png recoloured per type).
+     */
+    public static BufferedImage scaledTinted(String path, double factor,
+                                             double tr, double tg, double tb) {
+        BufferedImage src = load(path);
+        int w = src.getWidth();
+        int h = src.getHeight();
+        BufferedImage tinted = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int argb = src.getRGB(x, y);
+                int a = (argb >>> 24) & 255;
+                int r = Math.min(255, (int) (((argb >> 16) & 255) * tr));
+                int g = Math.min(255, (int) (((argb >> 8) & 255) * tg));
+                int b = Math.min(255, (int) ((argb & 255) * tb));
+                tinted.setRGB(x, y, (a << 24) | (r << 16) | (g << 8) | b);
+            }
+        }
+        return scale(tinted, Math.max(1, (int) Math.round(w * factor)),
+                Math.max(1, (int) Math.round(h * factor)));
+    }
+
     private static BufferedImage scale(BufferedImage src, int w, int h) {
         BufferedImage dst = new BufferedImage(Math.max(1, w), Math.max(1, h),
                 BufferedImage.TYPE_INT_ARGB);
