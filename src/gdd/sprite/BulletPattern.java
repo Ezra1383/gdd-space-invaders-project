@@ -25,26 +25,26 @@ public enum BulletPattern {
 
     private static final double SPEED = 3.2; // px/frame; dodgeable at player speed
 
-    public List<Bullet> fire(int ox, int oy, int px, int py, int shot) {
+    public List<Bullet> fire(int ox, int oy, int px, int py, int shot, ProjectileType proj) {
         List<Bullet> out = new ArrayList<>();
         double aim = Math.atan2(py - oy, px - ox);
         switch (this) {
             case AIMED:
-                out.add(bullet(ox, oy, aim));
+                out.add(bullet(ox, oy, aim, proj));
                 break;
             case FAN: {
                 int n = 5;
                 double spread = Math.toRadians(18);
                 for (int i = 0; i < n; i++) {
                     double a = aim + (i - (n - 1) / 2.0) * spread;
-                    out.add(bullet(ox, oy, a));
+                    out.add(bullet(ox, oy, a, proj));
                 }
                 break;
             }
             case RING: {
                 int n = 12;
                 for (int i = 0; i < n; i++) {
-                    out.add(bullet(ox, oy, i * 2 * Math.PI / n));
+                    out.add(bullet(ox, oy, i * 2 * Math.PI / n, proj));
                 }
                 break;
             }
@@ -52,22 +52,23 @@ public enum BulletPattern {
                 int n = 4;
                 double base = shot * Math.toRadians(23);
                 for (int i = 0; i < n; i++) {
-                    out.add(bullet(ox, oy, base + i * 2 * Math.PI / n));
+                    out.add(bullet(ox, oy, base + i * 2 * Math.PI / n, proj));
                 }
                 break;
             }
             case WAVE: {
                 double a = aim + Math.sin(shot * 0.5) * Math.toRadians(40);
-                out.add(bullet(ox, oy, a));
-                out.add(bullet(ox, oy, a + Math.toRadians(12)));
-                out.add(bullet(ox, oy, a - Math.toRadians(12)));
+                out.add(bullet(ox, oy, a, proj));
+                out.add(bullet(ox, oy, a + Math.toRadians(12), proj));
+                out.add(bullet(ox, oy, a - Math.toRadians(12), proj));
                 break;
             }
         }
         return out;
     }
 
-    private static Bullet bullet(int ox, int oy, double angle) {
-        return new Bullet(ox, oy, Math.cos(angle) * SPEED, Math.sin(angle) * SPEED);
+    private static Bullet bullet(int ox, int oy, double angle, ProjectileType proj) {
+        return new Bullet(ox, oy, Math.cos(angle) * SPEED, Math.sin(angle) * SPEED,
+                proj == null ? null : proj.imageFor(angle));
     }
 }

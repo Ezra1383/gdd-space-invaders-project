@@ -34,13 +34,22 @@ public class Bullet extends Sprite {
      * @param vy y velocity in px/frame
      */
     public Bullet(double cx, double cy, double vx, double vy) {
-        this.fx = cx - SIZE / 2.0;
-        this.fy = cy - SIZE / 2.0;
+        this(cx, cy, vx, vy, null);
+    }
+
+    /**
+     * @param sprite projectile art rotated to the travel angle; falls back to
+     *               the generated dot when the pack has no matching sprite.
+     */
+    public Bullet(double cx, double cy, double vx, double vy, Image sprite) {
+        Image img = sprite != null ? sprite : IMG;
+        setImage(img);
+        this.fx = cx - img.getWidth(null) / 2.0;
+        this.fy = cy - img.getHeight(null) / 2.0;
         this.vx = vx;
         this.vy = vy;
         this.x = (int) fx;
         this.y = (int) fy;
-        setImage(IMG);
     }
 
     private static Image makeImage() {
@@ -61,5 +70,29 @@ public class Bullet extends Sprite {
         fy += vy;
         x = (int) fx;
         y = (int) fy;
+    }
+
+    /**
+     * Collides on a tight centred core rather than the full image.
+     *
+     * Rotated projectile art sits on a diagonal-sized canvas, so its bounds
+     * include a lot of transparent padding — without this a bullet would hit
+     * well outside the visible sprite, which reads as unfair in a danmaku.
+     */
+    @Override
+    public boolean collidesWith(Sprite other) {
+        if (other == null || !isVisible() || !other.isVisible()) {
+            return false;
+        }
+        int w = getImage().getWidth(null);
+        int h = getImage().getHeight(null);
+        int cw = Math.max(4, (int) (w * 0.55));
+        int ch = Math.max(4, (int) (h * 0.55));
+        int cx = x + (w - cw) / 2;
+        int cy = y + (h - ch) / 2;
+        return cx < other.getX() + other.getImage().getWidth(null)
+                && cx + cw > other.getX()
+                && cy < other.getY() + other.getImage().getHeight(null)
+                && cy + ch > other.getY();
     }
 }

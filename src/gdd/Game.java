@@ -10,6 +10,12 @@ public class Game extends JFrame  {
     Scene1 scene1;
 
     public Game() {
+        // Decode the ship animations in the background while the title screen is
+        // up, so gameplay never stalls on a first-spawn sprite load.
+        Thread preload = new Thread(GifSprites::preload, "sprite-preload");
+        preload.setDaemon(true);
+        preload.start();
+
         titleScene = new TitleScene(this);
         scene1 = new Scene1(this);
         initUI();

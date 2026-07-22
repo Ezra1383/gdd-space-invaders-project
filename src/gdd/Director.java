@@ -145,7 +145,8 @@ public class Director implements SpawnSource {
             }
             wb -= f.cost;
             // Each formation is a squad of one enemy type from the phase's pool.
-            EnemyType type = phase.enemyPool.get(rng.nextInt(phase.enemyPool.size()));
+            // Heavies (mini-bosses) are only allowed as a lone SINGLE.
+            EnemyType type = pickType(phase, f == Formation.SINGLE);
             List<SpawnDetails> spawns = f.build(rng, frame, type.name());
             pending.addAll(spawns);
             count += spawns.size();
@@ -189,6 +190,25 @@ public class Director implements SpawnSource {
                 + (loops > 0 ? " (loop " + loops + ")" : ""));
     }
 
+    /**
+     * Random enemy type from the phase pool. Heavies are rejected unless this
+     * formation is a lone ship, so a mini-boss never arrives as a squad of four.
+     */
+    private EnemyType pickType(Phase phase, boolean allowHeavy) {
+        for (int tries = 0; tries < 8; tries++) {
+            EnemyType t = phase.enemyPool.get(rng.nextInt(phase.enemyPool.size()));
+            if (allowHeavy || !t.heavy) {
+                return t;
+            }
+        }
+        for (EnemyType t : phase.enemyPool) {
+            if (!t.heavy) {
+                return t;
+            }
+        }
+        return phase.enemyPool.get(0);
+    }
+
     /** Weighted pick among the phase's formations affordable within `budget`. */
     private Formation pickAffordableFormation(Phase phase, double budget) {
         int totalWeight = 0;
@@ -216,15 +236,17 @@ public class Director implements SpawnSource {
 
     private List<Phase> buildRun() {
         List<Phase> list = new ArrayList<>();
-        // Phase 1 — gentle approach: grunts and the odd darter.
+        // Phase 1 — gentle approach: fighters and darting scouts.
         list.add(new Phase("Approach", PHASE_FRAMES, 1.0,
                 List.of(Formation.SINGLE, Formation.COLUMN),
-                List.of(EnemyType.GRUNT, EnemyType.DARTER),
+                List.of(EnemyType.SCOUT, EnemyType.FIGHTER),
                 List.of("Warden", "Hive-Mother", "Sentinel")));
-        // Phase 2 — onslaught: bigger waves, turrets join the pool.
+        // Phase 2 — onslaught: bigger waves; frigates, bombers and the rare
+        // Battlecruiser mini-boss join the pool.
         list.add(new Phase("Onslaught", PHASE_FRAMES, 1.4,
                 List.of(Formation.SINGLE, Formation.COLUMN, Formation.WAVE, Formation.VEE),
-                List.of(EnemyType.GRUNT, EnemyType.DARTER, EnemyType.TURRET),
+                List.of(EnemyType.SCOUT, EnemyType.FIGHTER, EnemyType.FRIGATE,
+                        EnemyType.BOMBER, EnemyType.BATTLECRUISER),
                 List.of("Leviathan", "Swarm-Lord", "Dreadnought")));
         return list;
     }

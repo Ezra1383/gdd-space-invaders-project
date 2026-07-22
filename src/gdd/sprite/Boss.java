@@ -1,7 +1,7 @@
 package gdd.sprite;
 
 import static gdd.Global.*;
-import gdd.Images;
+import gdd.GifSprites;
 import java.util.Collections;
 import java.util.List;
 
@@ -20,13 +20,49 @@ public class Boss extends Enemy {
     private final String name;
     private int patrolDir = 1;
 
+    /** The Nairan flagship used for every boss. */
+    public static final String SHIP = "Dreadnought";
+    private static final int SPRITE_SIZE = 130;
+
+    // Signature beam attack: charge (telegraph) → fire → cool down. The boss
+    // holds still for the whole cycle so the beam is a readable, dodgeable line.
+    private static final int BEAM_INTERVAL = 420;
+    private static final int BEAM_CHARGE = 60;
+    private static final int BEAM_FIRE = 75;
+    /** Half-height of the damaging beam band. */
+    public static final int BEAM_HALF_THICKNESS = 20;
+
+    private int beamTimer = 0;
+    private int beamPhase = 0; // 0 = idle, 1 = charging, 2 = firing
+
     public Boss(String name, int x, int y, int hp) {
         super(x, y);
         this.name = name;
         this.hp = hp;
         this.maxHp = hp;
         this.dx = -3; // fly-in speed
-        setImage(Images.scaledTinted(IMG_ENEMY, SCALE_FACTOR * 3.0, 1.0, 0.35, 0.35));
+        this.shipName = SHIP;
+        this.spriteSize = SPRITE_SIZE;
+        this.ammo = ProjectileType.BOLT;
+        this.frames = GifSprites.ship(SHIP, SPRITE_SIZE);
+        this.weaponFrames = GifSprites.weapons(SHIP, SPRITE_SIZE);
+        this.shieldFrames = GifSprites.shields(SHIP, SPRITE_SIZE);
+        if (frames.length > 0) {
+            setImage(frames[0]);
+        }
+    }
+
+    public boolean isBeamCharging() {
+        return arrived && beamPhase == 1;
+    }
+
+    public boolean isBeamFiring() {
+        return arrived && beamPhase == 2;
+    }
+
+    /** Vertical centre of the beam (the boss's own centre line). */
+    public int getBeamCenterY() {
+        return y + getImage().getHeight(null) / 2;
     }
 
     public String getName() {
@@ -38,6 +74,8 @@ public class Boss extends Enemy {
         if (hitFlash > 0) {
             hitFlash--;
         }
+        advanceAnim();
+        advanceOverlays();
         if (!arrived) {
             // Fly in from the right to the hold column.
             x += dx;
@@ -47,6 +85,23 @@ public class Boss extends Enemy {
                 dx = 0;
             }
         } else {
+            // Beam cycle. While charging or firing the boss stops moving so the
+            // beam stays a fixed, dodgeable line.
+            beamTimer++;
+            if (beamPhase == 0 && beamTimer >= BEAM_INTERVAL) {
+                beamPhase = 1;
+                beamTimer = 0;
+            } else if (beamPhase == 1 && beamTimer >= BEAM_CHARGE) {
+                beamPhase = 2;
+                beamTimer = 0;
+            } else if (beamPhase == 2 && beamTimer >= BEAM_FIRE) {
+                beamPhase = 0;
+                beamTimer = 0;
+            }
+            if (beamPhase != 0) {
+                return; // hold position during the beam
+            }
+
             // Patrol up and down.
             y += patrolDir * PATROL_SPEED;
             int h = getImage().getHeight(null);
@@ -64,6 +119,9 @@ public class Boss extends Enemy {
     public List<Bullet> maybeFire(int playerX, int playerY) {
         if (!isVisible() || isDying() || !arrived) {
             return Collections.emptyList();
+        }
+        if (beamPhase != 0) {
+            return Collections.emptyList(); // busy with the signature beam
         }
         if (--fireCooldown > 0) {
             return Collections.emptyList();
@@ -83,8 +141,9 @@ public class Boss extends Enemy {
         }
         int cx = x + getImage().getWidth(null) / 2;
         int cy = y + getImage().getHeight(null) / 2;
-        List<Bullet> volley = pattern.fire(cx, cy, playerX, playerY, shotCount);
+        List<Bullet> volley = pattern.fire(cx, cy, playerX, playerY, shotCount, ammo);
         shotCount++;
+        triggerWeaponAnim();
         return volley;
     }
 }

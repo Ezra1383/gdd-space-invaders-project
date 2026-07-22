@@ -1,7 +1,7 @@
 package gdd.sprite;
 
-import static gdd.Global.*;
-import gdd.Images;
+import gdd.GifSprites;
+import java.awt.image.BufferedImage;
 import java.util.Collections;
 import java.util.List;
 
@@ -27,6 +27,21 @@ public class Enemy extends Sprite {
     protected int maxHp = 1;
     protected int hitFlash = 0;
 
+    // Animated ship sprite (Nairan base+engine loop).
+    protected BufferedImage[] frames = new BufferedImage[0];
+    protected int animTick = 0;
+    protected int animIdx = 0;
+    protected static final int ANIM_TICKS_PER_FRAME = 5;
+    protected String shipName = "Fighter";
+    protected int spriteSize = 48;
+    protected ProjectileType ammo = ProjectileType.BOLT;
+
+    // One-shot overlays: weapon flash while firing, shield flare when hit.
+    protected BufferedImage[] weaponFrames = new BufferedImage[0];
+    protected BufferedImage[] shieldFrames = new BufferedImage[0];
+    private int weaponIdx = -1;
+    private int shieldIdx = -1;
+
     public Enemy(EnemyType type, int x, int y) {
         this.x = x;
         this.y = y;
@@ -36,15 +51,41 @@ public class Enemy extends Sprite {
         this.firePattern = type.pattern;
         this.fireInterval = type.fireInterval;
         this.fireCooldown = type.fireInterval;
-        // Recoloured/scaled variant of the shared base sprite (swap art later).
-        setImage(Images.scaledTinted(IMG_ENEMY, SCALE_FACTOR * type.scale,
-                type.tintR, type.tintG, type.tintB));
+        this.shipName = type.ship;
+        this.spriteSize = type.spriteSize;
+        this.ammo = type.ammo;
+        this.frames = GifSprites.ship(type.ship, type.spriteSize);
+        this.weaponFrames = GifSprites.weapons(type.ship, type.spriteSize);
+        this.shieldFrames = GifSprites.shields(type.ship, type.spriteSize);
+        if (frames.length > 0) {
+            setImage(frames[0]);
+        }
     }
 
     /** Constructor for special enemies (e.g. Boss) that configure themselves. */
     protected Enemy(int x, int y) {
         this.x = x;
         this.y = y;
+    }
+
+    public String getShipName() {
+        return shipName;
+    }
+
+    public int getSpriteSize() {
+        return spriteSize;
+    }
+
+    /** Advances the idle/engine animation loop. */
+    protected void advanceAnim() {
+        if (isDying() || frames.length == 0) {
+            return;
+        }
+        if (++animTick >= ANIM_TICKS_PER_FRAME) {
+            animTick = 0;
+            animIdx = (animIdx + 1) % frames.length;
+            setImage(frames[animIdx]);
+        }
     }
 
     public void setHomeX(int homeX) {
@@ -63,7 +104,50 @@ public class Enemy extends Sprite {
     public boolean hit() {
         hitFlash = 4;
         hp--;
-        return hp <= 0;
+        boolean dead = hp <= 0;
+        if (!dead && shieldFrames.length > 0) {
+            shieldIdx = 0; // flare the shield instead of a flat white flash
+        }
+        return dead;
+    }
+
+    /** Current weapon-flash frame, or null when not firing. Aligns with the ship. */
+    public BufferedImage getWeaponOverlay() {
+        if (weaponIdx < 0 || weaponIdx >= weaponFrames.length || isDying()) {
+            return null;
+        }
+        return weaponFrames[weaponIdx];
+    }
+
+    /** Current shield-flare frame, or null. Draw centred on the ship. */
+    public BufferedImage getShieldOverlay() {
+        if (shieldIdx < 0 || shieldIdx >= shieldFrames.length || isDying()) {
+            return null;
+        }
+        return shieldFrames[shieldIdx];
+    }
+
+    /** Advances the one-shot weapon/shield overlays; call once per frame. */
+    protected void advanceOverlays() {
+        if (weaponIdx >= 0) {
+            weaponIdx++;
+            if (weaponIdx >= weaponFrames.length) {
+                weaponIdx = -1;
+            }
+        }
+        if (shieldIdx >= 0) {
+            shieldIdx++;
+            if (shieldIdx >= shieldFrames.length) {
+                shieldIdx = -1;
+            }
+        }
+    }
+
+    /** Starts the weapon-fire animation (called when a volley goes out). */
+    protected void triggerWeaponAnim() {
+        if (weaponFrames.length > 0) {
+            weaponIdx = 0;
+        }
     }
 
     public int getHitFlash() {
@@ -84,8 +168,9 @@ public class Enemy extends Sprite {
         fireCooldown = fireInterval;
         int cx = x + getImage().getWidth(null) / 2;
         int cy = y + getImage().getHeight(null) / 2;
-        List<Bullet> volley = firePattern.fire(cx, cy, playerX, playerY, shotCount);
+        List<Bullet> volley = firePattern.fire(cx, cy, playerX, playerY, shotCount, ammo);
         shotCount++;
+        triggerWeaponAnim();
         return volley;
     }
 
@@ -94,6 +179,9 @@ public class Enemy extends Sprite {
         if (hitFlash > 0) {
             hitFlash--;
         }
+
+        advanceAnim();
+        advanceOverlays();
 
         if (!arrived) {
             // Fly in from the right until reaching the home column, then lock.

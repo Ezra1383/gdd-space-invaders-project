@@ -4,7 +4,9 @@ import gdd.AudioPlayer;
 import gdd.Game;
 import static gdd.Global.*;
 import gdd.Director;
+import gdd.GifSprites;
 import gdd.Images;
+import gdd.Sfx;
 import gdd.SpawnDetails;
 import gdd.SpawnSource;
 import gdd.powerup.PowerUp;
@@ -12,11 +14,12 @@ import gdd.powerup.SpeedUp;
 import gdd.powerup.WeaponUp;
 import gdd.sprite.Boss;
 import gdd.sprite.Bullet;
+import gdd.sprite.Destruction;
 import gdd.sprite.Enemy;
 import gdd.sprite.EnemyType;
-import gdd.sprite.Explosion;
 import gdd.sprite.Player;
 import gdd.sprite.Shot;
+import gdd.sprite.Sprite;
 import java.awt.AlphaComposite;
 import java.awt.Color;
 import java.awt.Composite;
@@ -41,7 +44,7 @@ public class Scene1 extends JPanel {
     private int frame = 0;
     private List<PowerUp> powerups;
     private List<Enemy> enemies;
-    private List<Explosion> explosions;
+    private List<Sprite> explosions; // animated Destruction effects
     private List<Shot> shots;
     private List<Bullet> enemyBullets;
     private Player player;
@@ -67,6 +70,13 @@ public class Scene1 extends JPanel {
     private Boss activeBoss;
     private int bossBannerTimer = 0;
     private int bossesBeaten = 0;
+
+    // Screen shake (Stage 9). Purely cosmetic, so it uses its own unseeded RNG
+    // and never touches the Director's reproducible stream.
+    private final Random shakeRng = new Random();
+    private int shakeTimer = 0;
+    private int shakeFrames = 1;
+    private int shakeMag = 0;
 
     private int deaths = 0;
 
@@ -156,6 +166,7 @@ public class Scene1 extends JPanel {
 
         gameInit();
         initAudio();
+        Sfx.init(); // warm up sound effects so the first shot doesn't hitch
     }
 
     public void stop() {
@@ -188,6 +199,13 @@ public class Scene1 extends JPanel {
         // shot = new Shot();
     }
 
+    /** Kicks off a screen shake that decays over `frames`. */
+    private void shake(int frames, int magnitude) {
+        shakeTimer = frames;
+        shakeFrames = Math.max(1, frames);
+        shakeMag = magnitude;
+    }
+
     // Resets the whole run after a Game Over so the player can play again.
     private void restart() {
         frame = 0;
@@ -195,6 +213,7 @@ public class Scene1 extends JPanel {
         bossesBeaten = 0;
         activeBoss = null;
         bossBannerTimer = 0;
+        shakeTimer = 0;
         firing = false;
         fireTimer = 0;
         message = "Game Over";
@@ -275,15 +294,20 @@ public class Scene1 extends JPanel {
 
                 g.drawImage(enemy.getImage(), enemy.getX(), enemy.getY(), this);
 
-                if (enemy.getHitFlash() > 0) {
-                    // Brief white flash for hit feedback.
-                    Graphics2D g2 = (Graphics2D) g;
-                    Composite old = g2.getComposite();
-                    g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.6f));
-                    g2.setColor(Color.WHITE);
-                    g2.fillRect(enemy.getX(), enemy.getY(),
-                            enemy.getImage().getWidth(null), enemy.getImage().getHeight(null));
-                    g2.setComposite(old);
+                // Weapon flash is cropped with the same box as the ship, so it
+                // lines up exactly at the ship's own position.
+                var weapon = enemy.getWeaponOverlay();
+                if (weapon != null) {
+                    g.drawImage(weapon, enemy.getX(), enemy.getY(), this);
+                }
+
+                // Shield bubble extends past the hull, so it's drawn centred.
+                var shield = enemy.getShieldOverlay();
+                if (shield != null) {
+                    int cx = enemy.getX() + enemy.getImage().getWidth(null) / 2;
+                    int cy = enemy.getY() + enemy.getImage().getHeight(null) / 2;
+                    g.drawImage(shield, cx - shield.getWidth() / 2,
+                            cy - shield.getHeight() / 2, this);
                 }
             }
 
@@ -344,6 +368,47 @@ public class Scene1 extends JPanel {
         }
     }
 
+    /** The boss's signature Ray: a telegraphed line, then a damaging beam. */
+    private void drawBeam(Graphics g) {
+        if (activeBoss == null || !activeBoss.isVisible()) {
+            return;
+        }
+        boolean charging = activeBoss.isBeamCharging();
+        boolean firing = activeBoss.isBeamFiring();
+        if (!charging && !firing) {
+            return;
+        }
+        int cy = activeBoss.getBeamCenterY();
+        int muzzleX = activeBoss.getX();
+        Graphics2D g2 = (Graphics2D) g;
+        Composite old = g2.getComposite();
+
+        if (charging) {
+            // Thin blinking warning line so the player can get clear.
+            if ((frame / 4) % 2 == 0) {
+                g2.setColor(new Color(255, 90, 90));
+                g2.fillRect(0, cy - 2, muzzleX, 4);
+            }
+        } else {
+            int half = Boss.BEAM_HALF_THICKNESS;
+            // Outer glow
+            g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.45f));
+            g2.setColor(new Color(120, 170, 255));
+            g2.fillRect(0, cy - half, muzzleX, half * 2);
+            // Bright core
+            g2.setComposite(old);
+            g2.setColor(new Color(235, 245, 255));
+            g2.fillRect(0, cy - half / 3, muzzleX, (half / 3) * 2);
+            // Muzzle flare from the pack's Ray art
+            var flare = GifSprites.beam(130);
+            if (flare.length > 0) {
+                var f = flare[(frame / 3) % flare.length];
+                g2.drawImage(f, muzzleX - f.getWidth() / 2, cy - f.getHeight() / 2, this);
+            }
+        }
+        g2.setComposite(old);
+    }
+
     private void drawBoss(Graphics g) {
         // HP bar while the boss is on the field.
         if (activeBoss != null && activeBoss.isVisible()) {
@@ -382,9 +447,9 @@ public class Scene1 extends JPanel {
 
     private void drawExplosions(Graphics g) {
 
-        List<Explosion> toRemove = new ArrayList<>();
+        List<Sprite> toRemove = new ArrayList<>();
 
-        for (Explosion explosion : explosions) {
+        for (Sprite explosion : explosions) {
 
             if (explosion.isVisible()) {
                 g.drawImage(explosion.getImage(), explosion.getX(), explosion.getY(), this);
@@ -421,14 +486,28 @@ public class Scene1 extends JPanel {
 
         if (inGame) {
 
+            // Screen shake: offset the whole scene, decaying to zero.
+            int ox = 0;
+            int oy = 0;
+            if (shakeTimer > 0) {
+                shakeTimer--;
+                int m = Math.max(1, shakeMag * shakeTimer / shakeFrames);
+                ox = shakeRng.nextInt(2 * m + 1) - m;
+                oy = shakeRng.nextInt(2 * m + 1) - m;
+            }
+            g.translate(ox, oy);
+
             drawMap(g);  // Draw background stars first
             drawExplosions(g);
             drawPowreUps(g);
             drawAliens(g);
             drawEnemyBullets(g);
+            drawBeam(g);
             drawPlayer(g);
             drawShot(g);
             drawBoss(g);
+
+            g.translate(-ox, -oy);
 
         } else {
 
@@ -506,6 +585,7 @@ public class Scene1 extends JPanel {
                 powerup.act();
                 if (powerup.collidesWith(player)) {
                     powerup.upgrade(player);
+                    Sfx.powerup();
                 }
             }
         }
@@ -527,6 +607,8 @@ public class Scene1 extends JPanel {
                 player.setImage(Images.load(IMG_EXPLOSION));
                 player.setDying(true);
                 bullet.die();
+                Sfx.playerDeath();
+                shake(30, 12);
             }
 
             int bx = bullet.getX();
@@ -555,12 +637,14 @@ public class Scene1 extends JPanel {
                         shotsToRemove.add(shot);
 
                         if (enemy.hit()) { // reduce HP; true when it dies
-                            int enemyX = enemy.getX();
-                            int enemyY = enemy.getY();
+                            int enemyX = enemy.getX() + enemy.getImage().getWidth(null) / 2;
+                            int enemyY = enemy.getY() + enemy.getImage().getHeight(null) / 2;
 
-                            enemy.setImage(Images.load(IMG_EXPLOSION));
                             enemy.setDying(true);
-                            explosions.add(new Explosion(enemyX, enemyY));
+                            // That ship's own destruction animation, centred on it.
+                            explosions.add(new Destruction(enemy.getShipName(), enemyX, enemyY,
+                                    enemy.getSpriteSize() + 24));
+                            Sfx.enemyExplode();
                             deaths++;
 
                             // Random powerup drop on kill — the only way to get
@@ -588,6 +672,21 @@ public class Scene1 extends JPanel {
         }
         shots.removeAll(shotsToRemove);
 
+        // Boss beam: while firing, anything in the band left of the boss dies.
+        if (activeBoss != null && activeBoss.isBeamFiring() && player.isVisible()) {
+            int cy = activeBoss.getBeamCenterY();
+            int half = Boss.BEAM_HALF_THICKNESS;
+            int pTop = player.getY();
+            int pBottom = pTop + player.getImage().getHeight(null);
+            boolean inBand = pBottom > cy - half && pTop < cy + half;
+            if (inBand && player.getX() < activeBoss.getX()) {
+                player.setImage(Images.load(IMG_EXPLOSION));
+                player.setDying(true);
+                Sfx.playerDeath();
+                shake(30, 12);
+            }
+        }
+
         // Boss lifecycle: count down the intro banner, and on boss death drop a
         // big reward (several powerups) plus extra explosions.
         if (bossBannerTimer > 0) {
@@ -599,8 +698,13 @@ public class Scene1 extends JPanel {
             powerups.add(new WeaponUp(bx, by - 50));
             powerups.add(new WeaponUp(bx, by + 50));
             powerups.add(new SpeedUp(bx, by));
-            explosions.add(new Explosion(bx - 40, by - 30));
-            explosions.add(new Explosion(bx + 20, by + 20));
+            // Big flagship wreck, plus two smaller secondary blasts.
+            explosions.add(new Destruction(activeBoss.getShipName(), bx, by,
+                    activeBoss.getSpriteSize() + 60));
+            explosions.add(new Destruction("Fighter", bx - 50, by - 35, 70));
+            explosions.add(new Destruction("Fighter", bx + 45, by + 30, 70));
+            Sfx.bossDeath();
+            shake(35, 14);
             activeBoss = null;
             bossesBeaten++;
         }
@@ -692,6 +796,8 @@ public class Scene1 extends JPanel {
             enemies.add(boss);
             activeBoss = boss;
             bossBannerTimer = 150;
+            Sfx.bossWarn();
+            shake(18, 6);
             System.out.println(">>> BOSS INCOMING: " + name);
             return;
         }
@@ -748,6 +854,7 @@ public class Scene1 extends JPanel {
 
     // Fires the current weapon tier: sprite and shot pattern both scale up.
     private void fireWeapon() {
+        Sfx.shoot();
         int px = player.getX() + player.getImage().getWidth(null);
         int py = player.getY() + player.getImage().getHeight(null) / 2;
         switch (player.getWeaponLevel()) {
