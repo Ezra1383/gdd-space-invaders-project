@@ -1,5 +1,6 @@
 package gdd.sprite;
 
+import gdd.Faction;
 import gdd.GifSprites;
 import java.awt.image.BufferedImage;
 import java.util.Collections;
@@ -32,9 +33,10 @@ public class Enemy extends Sprite {
     protected int animTick = 0;
     protected int animIdx = 0;
     protected static final int ANIM_TICKS_PER_FRAME = 5;
+    protected Faction faction = Faction.NAIRAN;
     protected String shipName = "Fighter";
     protected int spriteSize = 48;
-    protected ProjectileType ammo = ProjectileType.BOLT;
+    protected ProjectileType ammo = ProjectileType.NAIRAN_BOLT;
 
     // One-shot overlays: weapon flash while firing, shield flare when hit.
     protected BufferedImage[] weaponFrames = new BufferedImage[0];
@@ -51,12 +53,13 @@ public class Enemy extends Sprite {
         this.firePattern = type.pattern;
         this.fireInterval = type.fireInterval;
         this.fireCooldown = type.fireInterval;
+        this.faction = type.faction;
         this.shipName = type.ship;
         this.spriteSize = type.spriteSize;
         this.ammo = type.ammo;
-        this.frames = GifSprites.ship(type.ship, type.spriteSize);
-        this.weaponFrames = GifSprites.weapons(type.ship, type.spriteSize);
-        this.shieldFrames = GifSprites.shields(type.ship, type.spriteSize);
+        this.frames = GifSprites.ship(faction, type.ship, type.spriteSize);
+        this.weaponFrames = GifSprites.weapons(faction, type.ship, type.spriteSize);
+        this.shieldFrames = GifSprites.shields(faction, type.ship, type.spriteSize);
         if (frames.length > 0) {
             setImage(frames[0]);
         }
@@ -66,6 +69,10 @@ public class Enemy extends Sprite {
     protected Enemy(int x, int y) {
         this.x = x;
         this.y = y;
+    }
+
+    public Faction getFaction() {
+        return faction;
     }
 
     public String getShipName() {
@@ -157,9 +164,12 @@ public class Enemy extends Sprite {
     /**
      * Ticks this enemy's fire timer and, when it elapses, fires a volley aimed
      * at (playerX, playerY). Returns the new bullets, or an empty list.
+     *
+     * Holds fire until the ship has reached its slot, so a wave never shoots
+     * from off-screen right before the player can see what's coming.
      */
     public List<Bullet> maybeFire(int playerX, int playerY) {
-        if (firePattern == null || !isVisible() || isDying()) {
+        if (firePattern == null || !isVisible() || isDying() || !arrived) {
             return Collections.emptyList();
         }
         if (--fireCooldown > 0) {

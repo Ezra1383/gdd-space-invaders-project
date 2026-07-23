@@ -118,6 +118,11 @@ public class Director implements SpawnSource {
         return phases.get(Math.min(phaseIndex, phases.size() - 1));
     }
 
+    @Override
+    public Faction biome() {
+        return currentPhase().biome;
+    }
+
     private List<SpawnDetails> drain(int frame) {
         List<SpawnDetails> due = null;
         while (!pending.isEmpty() && pending.peek().frame <= frame) {
@@ -173,10 +178,10 @@ public class Director implements SpawnSource {
         String boss = phase.bossPool.get(rng.nextInt(phase.bossPool.size()));
         System.out.println("[Director] BOSS GATE @frame " + frame + " — selected \""
                 + boss + "\" from " + phase.bossPool);
-        // Bosses aren't implemented yet (Stage 5+). Route through the normal
-        // spawn path as a placeholder so the wiring is real and testable now.
-        // (A real boss will be an enemy that blocks wave progression until killed.)
-        pending.add(new SpawnDetails(frame, "BOSS:" + boss, BOARD_WIDTH, BOARD_HEIGHT / 2));
+        // Encoded as BOSS:<faction>:<name> so the boss wears its biome's
+        // flagship art. Scene1.spawn() decodes it.
+        pending.add(new SpawnDetails(frame, "BOSS:" + phase.biome.name() + ":" + boss,
+                BOARD_WIDTH, BOARD_HEIGHT / 2));
     }
 
     private void advancePhase(int frame) {
@@ -236,33 +241,55 @@ public class Director implements SpawnSource {
 
     private List<Phase> buildRun() {
         List<Phase> list = new ArrayList<>();
+
+        // --- Biome 1: the Nairan ---
         // Phase 1 — gentle approach: fighters and darting scouts.
-        list.add(new Phase("Approach", PHASE_FRAMES, 1.0,
+        list.add(new Phase("Approach", Faction.NAIRAN, PHASE_FRAMES, 1.0,
                 List.of(Formation.SINGLE, Formation.COLUMN),
-                List.of(EnemyType.SCOUT, EnemyType.FIGHTER),
+                List.of(EnemyType.NAIRAN_SCOUT, EnemyType.NAIRAN_FIGHTER),
                 List.of("Warden", "Hive-Mother", "Sentinel")));
         // Phase 2 — onslaught: bigger waves; frigates, bombers and the rare
         // Battlecruiser mini-boss join the pool.
-        list.add(new Phase("Onslaught", PHASE_FRAMES, 1.4,
+        list.add(new Phase("Onslaught", Faction.NAIRAN, PHASE_FRAMES, 1.4,
                 List.of(Formation.SINGLE, Formation.COLUMN, Formation.WAVE, Formation.VEE),
-                List.of(EnemyType.SCOUT, EnemyType.FIGHTER, EnemyType.FRIGATE,
-                        EnemyType.BOMBER, EnemyType.BATTLECRUISER),
+                List.of(EnemyType.NAIRAN_SCOUT, EnemyType.NAIRAN_FIGHTER,
+                        EnemyType.NAIRAN_FRIGATE, EnemyType.NAIRAN_BOMBER,
+                        EnemyType.NAIRAN_BATTLECRUISER),
                 List.of("Leviathan", "Swarm-Lord", "Dreadnought")));
+
+        // --- Biome 2: the Kla'ed ---
+        // A whole new roster and projectile set arrives at once, so phase 3
+        // deliberately eases off the wave size to let the player read it.
+        list.add(new Phase("Kla'ed Vanguard", Faction.KLAED, PHASE_FRAMES, 1.2,
+                List.of(Formation.SINGLE, Formation.COLUMN, Formation.VEE),
+                List.of(EnemyType.KLAED_SCOUT, EnemyType.KLAED_FIGHTER,
+                        EnemyType.KLAED_TORPEDO_SHIP),
+                List.of("Ravager", "Blight", "Iron Choir")));
+        // Phase 4 — the full armada. This is the phase the run loops on, so it
+        // has to stay interesting at higher difficulty laps.
+        list.add(new Phase("Kla'ed Armada", Faction.KLAED, PHASE_FRAMES, 1.6,
+                List.of(Formation.SINGLE, Formation.COLUMN, Formation.WAVE, Formation.VEE),
+                List.of(EnemyType.KLAED_SCOUT, EnemyType.KLAED_FIGHTER,
+                        EnemyType.KLAED_FRIGATE, EnemyType.KLAED_BOMBER,
+                        EnemyType.KLAED_TORPEDO_SHIP, EnemyType.KLAED_BATTLECRUISER),
+                List.of("Void Sovereign", "Carrion King", "Kla'ed Prime")));
         return list;
     }
 
     /** One rising-intensity segment of the run, ended by a boss gate. */
     private static final class Phase {
         final String name;
+        final Faction biome;                // art pack this phase's boss wears
         final int durationFrames;
         final double waveBudgetMult;        // scales wave size for this phase
         final List<Formation> formations;   // allowed spawn shapes this phase
         final List<EnemyType> enemyPool;    // enemy types that can appear
         final List<String> bossPool;        // one is chosen when the phase ends
 
-        Phase(String name, int durationFrames, double waveBudgetMult,
+        Phase(String name, Faction biome, int durationFrames, double waveBudgetMult,
               List<Formation> formations, List<EnemyType> enemyPool, List<String> bossPool) {
             this.name = name;
+            this.biome = biome;
             this.durationFrames = durationFrames;
             this.waveBudgetMult = waveBudgetMult;
             this.formations = formations;

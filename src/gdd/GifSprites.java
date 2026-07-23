@@ -14,39 +14,43 @@ import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
 
 /**
- * Loads the Nairan ship GIFs into game-ready animation frames.
+ * Loads a {@link Faction}'s ship pack into game-ready animation frames.
  *
- * The pack ships *preview* GIFs, so each needs cleaning before use:
+ * The packs ship *preview* art, so each layer needs cleaning before use:
  * <ul>
  *   <li>the ship's name is baked into the top of the canvas — cropped off;</li>
- *   <li>GIF has no alpha, so the flat {@code #2E222F} background is colour-keyed
- *       to transparent (without this, stacking layers just hides the ship);</li>
+ *   <li>the background is a flat opaque {@code #2E222F}, colour-keyed to
+ *       transparent (without this, stacking layers just hides the ship);</li>
  *   <li>the ships face up, but our enemies fly left — every frame is rotated
  *       90° counter-clockwise so exhaust trails behind them.</li>
  * </ul>
  *
  * Base and Engine are composited per-frame into the ship loop. Weapons are
  * cropped with the <em>same</em> box as the ship so the muzzle flash lines up
- * when drawn as an overlay. Shields are cropped to their own bounds and drawn
- * centred, since the shield bubble extends past the hull.
+ * when drawn as an overlay. Shields are the ship silhouette outlined in red, so
+ * they render at exactly the ship's scale (see {@link #shields}).
+ *
+ * Files are located by matching normalised name segments rather than exact
+ * paths, because the packs are inconsistent about folder names, casing and
+ * spacing (see {@link Faction}).
  */
 public final class GifSprites {
 
-    private static final String ROOT = "src/images/Nairan/";
     private static final int BG = 0x2E222F; // flat preview background
     private static final int TOL2 = 900;    // squared colour distance tolerance
     /**
-     * Rows reserved for the baked-in ship name. Measured across the whole pack
-     * the label always ends by row 44 (on both the 320 and 640 canvases) while
-     * the earliest ship pixel is row 65, so discarding the top 50 rows is safe.
-     * Needed because on some ships (e.g. Frigate) the hull touches the label,
-     * merging them into one band and defeating gap detection.
+     * Fallback rows to discard for the baked-in ship name, used only when band
+     * detection can't separate the label from the hull (Nairan's Frigate hull
+     * touches its label, merging them into one band). Measured across both
+     * packs the label always ends by row 54 and the earliest ship pixel is row
+     * 55, so detection normally wins; this is the floor when it doesn't.
      */
     private static final int LABEL_ROWS = 50;
 
     // Concurrent: preloading runs on a background thread while the title shows.
     private static final Map<String, BufferedImage[]> CACHE = new ConcurrentHashMap<>();
     private static final Map<String, Rectangle> BOXES = new ConcurrentHashMap<>();
+    private static final Map<String, File[]> DIRS = new ConcurrentHashMap<>();
 
     private GifSprites() {
     }
@@ -54,34 +58,51 @@ public final class GifSprites {
     /**
      * Decodes every sprite the game uses so nothing hitches mid-run.
      * Safe to call off the EDT; the caches are concurrent.
+     *
+     * Factions are done in declaration order so the opening biome's art is
+     * ready first — later biomes are minutes away and finish long before then.
      */
     public static void preload() {
-        for (gdd.sprite.EnemyType t : gdd.sprite.EnemyType.values()) {
-            ship(t.ship, t.spriteSize);
-            weapons(t.ship, t.spriteSize);
-            shields(t.ship, t.spriteSize);
-            destruction(t.ship, t.spriteSize + 24);
+        for (Faction f : Faction.values()) {
+            if (layerDir(f, "base").length == 0) {
+                continue; // faction with no gif-pack layout (e.g. the Void ships)
+            }
+            for (gdd.sprite.EnemyType t : gdd.sprite.EnemyType.values()) {
+                if (t.faction != f) {
+                    continue;
+                }
+                ship(f, t.ship, t.spriteSize);
+                weapons(f, t.ship, t.spriteSize);
+                shields(f, t.ship, t.spriteSize);
+                destruction(f, t.ship, t.spriteSize + 24);
+            }
+            String boss = gdd.sprite.Boss.SHIP;
+            ship(f, boss, gdd.sprite.Boss.SPRITE_SIZE);
+            weapons(f, boss, gdd.sprite.Boss.SPRITE_SIZE);
+            shields(f, boss, gdd.sprite.Boss.SPRITE_SIZE);
+            destruction(f, boss, 190);
+            destruction(f, "Fighter", 70); // boss secondary blasts
+            for (gdd.sprite.ProjectileType p : gdd.sprite.ProjectileType.values()) {
+                if (p.faction == f) {
+                    projectileRotations(f, p.gif, p.size, gdd.sprite.ProjectileType.STEPS);
+                }
+            }
+            beam(f, gdd.sprite.Boss.SPRITE_SIZE);
+            // Wave walls, at every height the boss can size one to.
+            for (int size : gdd.sprite.Boss.waveSlotSizes()) {
+                wave(f, size);
+            }
         }
-        String boss = gdd.sprite.Boss.SHIP;
-        ship(boss, 130);
-        weapons(boss, 130);
-        shields(boss, 130);
-        destruction(boss, 190);
-        destruction("Fighter", 70); // boss secondary blasts
-        for (gdd.sprite.ProjectileType p : gdd.sprite.ProjectileType.values()) {
-            projectileRotations(p.gif, p.size, gdd.sprite.ProjectileType.STEPS);
-        }
-        beam(130);
     }
 
     /** Animated ship (Base + Engine composited), rotated to face left. */
-    public static BufferedImage[] ship(String name, int targetMax) {
-        return CACHE.computeIfAbsent("ship:" + name + ":" + targetMax, k -> {
-            BufferedImage[] comp = shipComposite(name);
+    public static BufferedImage[] ship(Faction f, String name, int targetMax) {
+        return CACHE.computeIfAbsent(key(f, "ship", name, targetMax), k -> {
+            BufferedImage[] comp = shipComposite(f, name);
             if (comp.length == 0) {
                 return new BufferedImage[0];
             }
-            return finish(comp, shipBox(name), targetMax);
+            return finish(comp, shipBox(f, name), targetMax);
         });
     }
 
@@ -89,14 +110,13 @@ public final class GifSprites {
      * One-shot weapon-fire overlay, cropped with the same box as {@link #ship}
      * so it can be drawn straight on top at the same position.
      */
-    public static BufferedImage[] weapons(String name, int targetMax) {
-        return CACHE.computeIfAbsent("wpn:" + name + ":" + targetMax, k -> {
-            BufferedImage[] raw = readGif(ROOT + "Weapons/Nairan - " + name + " - Weapons.gif");
+    public static BufferedImage[] weapons(Faction f, String name, int targetMax) {
+        return CACHE.computeIfAbsent(key(f, "wpn", name, targetMax), k -> {
+            BufferedImage[] raw = readFrames(file(f, "weapon", name));
             if (raw.length == 0) {
                 return new BufferedImage[0]; // e.g. Bomber has no weapons layer
             }
-            BufferedImage[] keyed = keyAll(raw);
-            return finish(keyed, shipBox(name), targetMax);
+            return finish(keyAll(raw), shipBox(f, name), targetMax);
         });
     }
 
@@ -111,15 +131,15 @@ public final class GifSprites {
      *                      by the same factor as the ship, so drawing it centred
      *                      on the ship lines up exactly.
      */
-    public static BufferedImage[] shields(String name, int shipTargetMax) {
-        return CACHE.computeIfAbsent("shd:" + name + ":" + shipTargetMax, k -> {
-            BufferedImage[] raw = readGif(ROOT + "Shields/Nairan - " + name + " - Shield.gif");
+    public static BufferedImage[] shields(Faction f, String name, int shipTargetMax) {
+        return CACHE.computeIfAbsent(key(f, "shd", name, shipTargetMax), k -> {
+            BufferedImage[] raw = readFrames(file(f, "shield", name));
             if (raw.length == 0) {
-                return new BufferedImage[0];
+                return new BufferedImage[0]; // e.g. Kla'ed Support ship has none
             }
             BufferedImage[] keyed = keyAll(raw);
-            Rectangle sb = shipBox(name);
-            Rectangle own = ownBox(name, keyed);
+            Rectangle sb = shipBox(f, name);
+            Rectangle own = ownBox(f, name, keyed);
             // Smallest box centred on the ship centre that contains the shield.
             double cx = sb.getCenterX();
             double cy = sb.getCenterY();
@@ -136,18 +156,14 @@ public final class GifSprites {
     }
 
     /** One-shot destruction animation, rotated to match the ships. */
-    public static BufferedImage[] destruction(String name, int targetMax) {
-        return CACHE.computeIfAbsent("boom:" + name + ":" + targetMax, k -> {
-            // Filenames in this folder have inconsistent spacing around the dash.
-            BufferedImage[] raw = readGif(ROOT + "Destruction/Nairan - " + name + " -  Destruction.gif");
-            if (raw.length == 0) {
-                raw = readGif(ROOT + "Destruction/Nairan - " + name + "  -  Destruction.gif");
-            }
+    public static BufferedImage[] destruction(Faction f, String name, int targetMax) {
+        return CACHE.computeIfAbsent(key(f, "boom", name, targetMax), k -> {
+            BufferedImage[] raw = readFrames(file(f, "destruction", name));
             if (raw.length == 0) {
                 return new BufferedImage[0];
             }
             BufferedImage[] keyed = keyAll(raw);
-            return finish(keyed, ownBox(name, keyed), targetMax);
+            return finish(keyed, ownBox(f, name, keyed), targetMax);
         });
     }
 
@@ -156,9 +172,10 @@ public final class GifSprites {
      * bullet can pick the sprite matching its travel angle. Index 0 points
      * right (angle 0); index i covers angle i*2PI/steps.
      */
-    public static BufferedImage[] projectileRotations(String gifName, int targetMax, int steps) {
-        return CACHE.computeIfAbsent("proj:" + gifName + ":" + targetMax + ":" + steps, k -> {
-            BufferedImage[] raw = readGif(ROOT + "Projectiles/Nairan - " + gifName + ".gif");
+    public static BufferedImage[] projectileRotations(Faction f, String gifName,
+                                                      int targetMax, int steps) {
+        return CACHE.computeIfAbsent(key(f, "proj", gifName, targetMax) + ":" + steps, k -> {
+            BufferedImage[] raw = readFrames(projectile(f, gifName));
             if (raw.length == 0) {
                 return new BufferedImage[0];
             }
@@ -176,9 +193,9 @@ public final class GifSprites {
     }
 
     /** The Ray beam segment, rotated to fire leftwards (boss signature move). */
-    public static BufferedImage[] beam(int targetMax) {
-        return CACHE.computeIfAbsent("beam:" + targetMax, k -> {
-            BufferedImage[] raw = readGif(ROOT + "Projectiles/Nairan - Ray.gif");
+    public static BufferedImage[] beam(Faction f, int targetMax) {
+        return CACHE.computeIfAbsent(key(f, "beam", "Ray", targetMax), k -> {
+            BufferedImage[] raw = readFrames(projectile(f, "Ray"));
             if (raw.length == 0) {
                 return new BufferedImage[0];
             }
@@ -193,44 +210,142 @@ public final class GifSprites {
         });
     }
 
+    /**
+     * The Kla'ed Wave, sized so its long axis is {@code targetMax}.
+     *
+     * In the source it's a broad arc fired forward by an upward-facing ship;
+     * the shared rotate-to-face-left step turns it into a vertical wall, which
+     * is how the boss uses it. Frames are cropped with one union box so the
+     * wall neither jumps nor resizes as it thickens across the animation.
+     */
+    public static BufferedImage[] wave(Faction f, int targetMax) {
+        return CACHE.computeIfAbsent(key(f, "wave", "Wave", targetMax), k -> {
+            BufferedImage[] raw = readFrames(projectile(f, "Wave"));
+            if (raw.length == 0) {
+                return new BufferedImage[0]; // Nairan has no Wave layer
+            }
+            BufferedImage[] keyed = keyAll(raw);
+            return finish(keyed, contentBox(keyed, -1), targetMax);
+        });
+    }
+
+    private static String key(Faction f, String layer, String name, int size) {
+        return f.name() + ":" + layer + ":" + name + ":" + size;
+    }
+
+    // --- file resolution --------------------------------------------------
+
+    /**
+     * Files in a faction's layer folder, matched by prefix so {@code Engine}
+     * and {@code Engines} (or {@code Shield}/{@code Shields}) both resolve.
+     *
+     * @param layer lowercase singular stem, e.g. "base", "engine", "weapon"
+     */
+    private static File[] layerDir(Faction f, String layer) {
+        return DIRS.computeIfAbsent(f.name() + ":" + layer, k -> {
+            File[] subs = new File(f.root()).listFiles(File::isDirectory);
+            if (subs == null) {
+                System.err.println("Missing art pack folder: " + f.root());
+                return new File[0];
+            }
+            for (File d : subs) {
+                if (norm(d.getName()).startsWith(layer)) {
+                    File[] fs = d.listFiles(File::isFile);
+                    return fs == null ? new File[0] : fs;
+                }
+            }
+            return new File[0];
+        });
+    }
+
+    /**
+     * A ship's file in a layer folder. Filenames are
+     * {@code <Faction> - <Ship> - <Layer>.<ext>}, so the ship is the
+     * second-from-last dash-separated segment; comparing it normalised makes
+     * the packs' stray double spaces and casing ("Support ship") irrelevant.
+     *
+     * @return null when the pack has no such layer for this ship
+     */
+    private static File file(Faction f, String layer, String ship) {
+        String want = norm(ship);
+        for (File file : layerDir(f, layer)) {
+            if (norm(segment(file.getName(), 1)).equals(want)) {
+                return file;
+            }
+        }
+        return null;
+    }
+
+    /** A projectile file, named {@code <Faction> - <Projectile>.<ext>}. */
+    private static File projectile(Faction f, String name) {
+        String want = norm(name);
+        for (File file : layerDir(f, "projectile")) {
+            // Exact last-segment match, so "Bullet" never picks "Big Bullet".
+            if (norm(segment(file.getName(), 0)).equals(want)) {
+                return file;
+            }
+        }
+        return null;
+    }
+
+    /** Dash-separated segment counted from the end (0 = last), extension dropped. */
+    private static String segment(String filename, int fromEnd) {
+        int dot = filename.lastIndexOf('.');
+        String base = dot > 0 ? filename.substring(0, dot) : filename;
+        String[] parts = base.split("-");
+        int i = parts.length - 1 - fromEnd;
+        return i >= 0 ? parts[i] : "";
+    }
+
+    private static String norm(String s) {
+        return s.toLowerCase().replaceAll("[^a-z0-9]", "");
+    }
+
     // --- boxes ------------------------------------------------------------
 
     /** Ship bounds (Base+Engine union), shared by the weapons overlay. */
-    private static Rectangle shipBox(String name) {
-        return BOXES.computeIfAbsent("ship:" + name, k -> {
-            BufferedImage[] comp = shipComposite(name);
+    private static Rectangle shipBox(Faction f, String name) {
+        return BOXES.computeIfAbsent(f.name() + ":ship:" + name, k -> {
+            BufferedImage[] comp = shipComposite(f, name);
             if (comp.length == 0) {
                 return new Rectangle(0, 0, 1, 1);
             }
-            BufferedImage[] base = readGif(ROOT + "Bases/Nairan - " + name + " - Base.gif");
-            return contentBox(comp, labelSkip(base.length > 0 ? base[0] : comp[0]));
+            return contentBox(comp, baseLabelSkip(f, name, comp[0]));
         });
     }
 
     /** Bounds of a layer in its own right, with the ship's label band skipped. */
-    private static Rectangle ownBox(String name, BufferedImage[] keyed) {
-        BufferedImage[] base = readGif(ROOT + "Bases/Nairan - " + name + " - Base.gif");
-        // Take the label band from the Base gif: on a destruction/shield frame
+    private static Rectangle ownBox(Faction f, String name, BufferedImage[] keyed) {
+        // Take the label band from the Base layer: on a destruction/shield frame
         // the effect can touch the text, merging bands and defeating detection.
-        int skip = labelSkip(base.length > 0 ? base[0] : keyed[0]);
-        return contentBox(keyed, skip);
+        return contentBox(keyed, baseLabelSkip(f, name, keyed[0]));
     }
 
-    private static BufferedImage[] shipComposite(String name) {
-        BufferedImage[] base = readGif(ROOT + "Bases/Nairan - " + name + " - Base.gif");
+    private static int baseLabelSkip(Faction f, String name, BufferedImage fallback) {
+        BufferedImage[] base = readFrames(file(f, "base", name));
+        return labelSkip(base.length > 0 ? base[0] : fallback);
+    }
+
+    private static BufferedImage[] shipComposite(Faction f, String name) {
+        BufferedImage[] base = readFrames(file(f, "base", name));
         if (base.length == 0) {
             return new BufferedImage[0];
         }
-        BufferedImage[] engine = readGif(ROOT + "Engines/Nairan - " + name + " - Engine.gif");
-        BufferedImage[] comp = new BufferedImage[base.length];
-        for (int i = 0; i < base.length; i++) {
-            BufferedImage b = key(base[i]);
+        BufferedImage[] engine = readFrames(file(f, "engine", name));
+        BufferedImage[] baseKeyed = keyAll(base);
+        BufferedImage[] engineKeyed = keyAll(engine);
+        // Kla'ed ships have a STATIC png base, so the loop length comes from the
+        // engine flicker; Nairan animates both, at matching lengths.
+        int n = Math.max(baseKeyed.length, engineKeyed.length);
+        BufferedImage[] comp = new BufferedImage[n];
+        for (int i = 0; i < n; i++) {
+            BufferedImage b = baseKeyed[i % baseKeyed.length];
             BufferedImage c = new BufferedImage(b.getWidth(), b.getHeight(),
                     BufferedImage.TYPE_INT_ARGB);
             Graphics2D g = c.createGraphics();
             g.drawImage(b, 0, 0, null);
-            if (engine.length > 0) {
-                g.drawImage(key(engine[i % engine.length]), 0, 0, null);
+            if (engineKeyed.length > 0) {
+                g.drawImage(engineKeyed[i % engineKeyed.length], 0, 0, null);
             }
             g.dispose();
             comp[i] = c;
@@ -312,7 +427,8 @@ public final class GifSprites {
             boolean any = false;
             int row = y * w;
             for (int x = 0; x < w; x++) {
-                if (!isBg(px[row + x] & 0xFFFFFF)) {
+                int p = px[row + x];
+                if (((p >>> 24) & 255) > 16 && !isBg(p & 0xFFFFFF)) {
                     any = true;
                     break;
                 }
@@ -413,9 +529,13 @@ public final class GifSprites {
         return out;
     }
 
-    private static BufferedImage[] readGif(String path) {
-        File f = new File(path);
-        if (!f.exists()) {
+    /**
+     * Every frame of an image file. ImageIO's multi-image API covers both the
+     * animated GIF layers and Kla'ed's single-frame PNG bases, so the pipeline
+     * doesn't care which a pack uses.
+     */
+    private static BufferedImage[] readFrames(File f) {
+        if (f == null || !f.exists()) {
             return new BufferedImage[0];
         }
         try (ImageInputStream in = ImageIO.createImageInputStream(f)) {
@@ -433,7 +553,7 @@ public final class GifSprites {
             r.dispose();
             return out;
         } catch (Exception e) {
-            System.err.println("Failed to read GIF: " + path + " (" + e.getMessage() + ")");
+            System.err.println("Failed to read image: " + f + " (" + e.getMessage() + ")");
             return new BufferedImage[0];
         }
     }

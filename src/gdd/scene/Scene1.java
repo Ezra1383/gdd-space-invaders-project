@@ -1,14 +1,17 @@
 package gdd.scene;
 
 import gdd.AudioPlayer;
+import gdd.Background;
 import gdd.Game;
 import static gdd.Global.*;
 import gdd.Director;
+import gdd.Faction;
 import gdd.GifSprites;
 import gdd.Images;
 import gdd.Sfx;
 import gdd.SpawnDetails;
 import gdd.SpawnSource;
+import gdd.Weapons;
 import gdd.powerup.PowerUp;
 import gdd.powerup.SpeedUp;
 import gdd.powerup.WeaponUp;
@@ -50,16 +53,12 @@ public class Scene1 extends JPanel {
     private Player player;
     // private Shot shot;
 
-    final int BLOCKHEIGHT = 50;
-    final int BLOCKWIDTH = 50;
-
-    // Weapon-tier bullet sprites, cut from the sheet (keyed transparent).
-    private static final int[] BKEYS = {0x003663, 0x464646, 0x000000};
-    private static final Image BULLET_PELLET = Images.tile(IMG_SPRITES, 246, 12, 12, 7, 2, BKEYS, 40);
-    // Round, symmetric orb (no facing) so angled/rightward shots never look reversed.
-    private static final Image BULLET_ORB = Images.tile(IMG_SPRITES, 288, 36, 10, 9, 3, BKEYS, 40);
-    private static final Image BULLET_COMET = Images.tile(IMG_SPRITES, 380, 7, 29, 19, 2, BKEYS, 40);
-    private static final double SHOT_SPEED = 12;
+    // Weapon-tier bullet sprites now live in gdd.Weapons — Nemesis fires them
+    // back at us, so both sides share one definition.
+    private static final Image BULLET_PELLET = Weapons.PELLET;
+    private static final Image BULLET_ORB = Weapons.ORB;
+    private static final Image BULLET_COMET = Weapons.COMET;
+    private static final double SHOT_SPEED = Weapons.SHOT_SPEED;
     private static final int FIRE_INTERVAL = 9; // frames between volleys while firing
 
     private boolean firing = false;
@@ -91,41 +90,27 @@ public class Scene1 extends JPanel {
     // Independent stream for kill-drop rolls, so drops don't perturb the
     // Director's wave generation.
     private final Random dropRng = new Random(RUN_SEED + 1337);
+    // Likewise for boss ray placement — gameplay, so seeded and reproducible,
+    // but on its own stream so it can't shift wave generation.
+    private final Random bossRng = new Random(RUN_SEED + 991);
     private static final int POWERUP_DROP_PERCENT = 20;
 
     private Timer timer;
     private final Game game;
 
-    // TODO load this map from a file
-    private final int[][] MAP = {
-        {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-        {0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-        {0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-        {0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0},
-        {0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0},
-        {0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0},
-        {0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0},
-        {0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0},
-        {0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0},
-        {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0},
-        {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0},
-        {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
-        {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-        {0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-        {0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-        {0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0},
-        {0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0},
-        {0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0},
-        {0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0},
-        {0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0},
-        {0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0},
-        {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0},
-        {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0},
-        {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
-    };
-
     private SpawnSource spawnSource;
     private AudioPlayer audioPlayer;
+
+    // Parallax backdrop. Swapped when the Director moves the run into a new
+    // biome, so the sky changes with the roster rather than on its own timer.
+    private Background backdrop;
+    private Faction backdropBiome;
+    /**
+     * Art-review aid: B cycles the backdrop through every biome, N returns it to
+     * following the run. Biome 3 has no enemy roster yet, so this is the only
+     * way to see its sky.
+     */
+    private Faction backdropOverride;
 
     public Scene1(Game game) {
         this.game = game;
@@ -196,7 +181,10 @@ public class Scene1 extends JPanel {
         // }
         // }
         player = new Player();
-        // shot = new Shot();
+
+        // Built here (not lazily in update) so the first paint has a backdrop.
+        backdropBiome = spawnSource.biome();
+        backdrop = Background.of(backdropBiome);
     }
 
     /** Kicks off a screen shake that decays over `frames`. */
@@ -223,67 +211,6 @@ public class Scene1 extends JPanel {
         if (!timer.isRunning()) {
             timer.start();
         }
-    }
-
-    private void drawMap(Graphics g) {
-        // Draw scrolling starfield background
-
-        // Calculate smooth scrolling offset (1 pixel per frame)
-        int scrollOffset = (frame) % BLOCKWIDTH;
-
-        // Calculate which columns to draw based on screen position
-        int baseCol = (frame) / BLOCKWIDTH;
-        int colsNeeded = (BOARD_WIDTH / BLOCKWIDTH) + 2; // +2 for smooth scrolling
-
-        // Loop through columns that should be visible on screen
-        for (int screenCol = 0; screenCol < colsNeeded; screenCol++) {
-            // Calculate which MAP row to use (with wrapping) — MAP's outer
-            // dimension is now the scrolling axis
-            int mapRow = (baseCol + screenCol) % MAP.length;
-
-            // Calculate X position for this column
-            int x = BOARD_WIDTH - ( (screenCol * BLOCKWIDTH) - scrollOffset );
-
-            // Skip if column is completely off-screen
-            if (x > BOARD_WIDTH || x < -BLOCKWIDTH) {
-                continue;
-            }
-
-            // Draw each row in this column
-            for (int row = 0; row < MAP[mapRow].length; row++) {
-                if (MAP[mapRow][row] == 1) {
-                    // Calculate Y position
-                    int y = row * BLOCKHEIGHT;
-
-                    // Draw a cluster of stars
-                    drawStarCluster(g, x, y, BLOCKWIDTH, BLOCKHEIGHT);
-                }
-            }
-        }
-
-    }
-
-    private void drawStarCluster(Graphics g, int x, int y, int width, int height) {
-        // Set star color to white
-        g.setColor(Color.WHITE);
-
-        // Draw multiple stars in a cluster pattern
-        // Main star (larger)
-        int centerX = x + width / 2;
-        int centerY = y + height / 2;
-        g.fillOval(centerX - 2, centerY - 2, 4, 4);
-
-        // Smaller surrounding stars
-        g.fillOval(centerX - 15, centerY - 10, 2, 2);
-        g.fillOval(centerX + 12, centerY - 8, 2, 2);
-        g.fillOval(centerX - 8, centerY + 12, 2, 2);
-        g.fillOval(centerX + 10, centerY + 15, 2, 2);
-
-        // Tiny stars for more detail
-        g.fillOval(centerX - 20, centerY + 5, 1, 1);
-        g.fillOval(centerX + 18, centerY - 15, 1, 1);
-        g.fillOval(centerX - 5, centerY - 18, 1, 1);
-        g.fillOval(centerX + 8, centerY + 20, 1, 1);
     }
 
     private void drawAliens(Graphics g) {
@@ -368,45 +295,90 @@ public class Scene1 extends JPanel {
         }
     }
 
-    /** The boss's signature Ray: a telegraphed line, then a damaging beam. */
+    /**
+     * The boss's signature Ray: telegraphed lines, then arena-wide killing
+     * bands. They span the full board and are anchored at the right edge rather
+     * than the boss's hull, because their placement is independent of where the
+     * boss happens to be patrolling.
+     */
     private void drawBeam(Graphics g) {
         if (activeBoss == null || !activeBoss.isVisible()) {
             return;
         }
-        boolean charging = activeBoss.isBeamCharging();
-        boolean firing = activeBoss.isBeamFiring();
-        if (!charging && !firing) {
-            return;
-        }
-        int cy = activeBoss.getBeamCenterY();
-        int muzzleX = activeBoss.getX();
         Graphics2D g2 = (Graphics2D) g;
         Composite old = g2.getComposite();
 
-        if (charging) {
-            // Thin blinking warning line so the player can get clear.
-            if ((frame / 4) % 2 == 0) {
-                g2.setColor(new Color(255, 90, 90));
-                g2.fillRect(0, cy - 2, muzzleX, 4);
+        // Permanent rays (Kla'ed): walls that have locked in for the rest of the
+        // fight. Drawn in the faction's red so they never read as the temporary
+        // blue sweep — one is a hazard that passes, the other never leaves.
+        int[] perm = activeBoss.getPermanentRays();
+        int armed = activeBoss.getArmedRayCount();
+        for (int i = 0; i < perm.length; i++) {
+            if (i < armed) {
+                drawBand(g2, old, perm[i], new Color(255, 120, 60), new Color(255, 235, 200));
+            } else if ((frame / 4) % 2 == 0) {
+                // Still arming — a warning only, harmless until it locks in.
+                drawWarningLine(g2, perm[i]);
             }
-        } else {
-            int half = Boss.BEAM_HALF_THICKNESS;
-            // Outer glow
-            g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.45f));
-            g2.setColor(new Color(120, 170, 255));
-            g2.fillRect(0, cy - half, muzzleX, half * 2);
-            // Bright core
-            g2.setComposite(old);
-            g2.setColor(new Color(235, 245, 255));
-            g2.fillRect(0, cy - half / 3, muzzleX, (half / 3) * 2);
-            // Muzzle flare from the pack's Ray art
-            var flare = GifSprites.beam(130);
-            if (flare.length > 0) {
-                var f = flare[(frame / 3) % flare.length];
-                g2.drawImage(f, muzzleX - f.getWidth() / 2, cy - f.getHeight() / 2, this);
+        }
+
+        // Temporary rays (Nairan): telegraphed, then lethal, then gone.
+        boolean charging = activeBoss.isBeamCharging();
+        boolean firing = activeBoss.isBeamFiring();
+        if (charging || firing) {
+            for (int cy : activeBoss.getBeamBands()) {
+                if (charging) {
+                    if ((frame / 4) % 2 == 0) {
+                        drawWarningLine(g2, cy);
+                    }
+                } else {
+                    drawBand(g2, old, cy, new Color(120, 170, 255), new Color(235, 245, 255));
+                }
+            }
+        }
+
+        // Nemesis's vertical ray — the other axis giving way.
+        int vx = activeBoss.getVerticalRay();
+        if (vx != Integer.MIN_VALUE) {
+            if (activeBoss.isVerticalCharging()) {
+                if ((frame / 4) % 2 == 0) {
+                    g2.setColor(new Color(255, 90, 90));
+                    g2.fillRect(vx - 2, 0, 4, BOARD_HEIGHT);
+                }
+            } else if (activeBoss.isVerticalFiring()) {
+                int half = Boss.VBEAM_HALF_THICKNESS;
+                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.45f));
+                g2.setColor(new Color(255, 120, 200));
+                g2.fillRect(vx - half, 0, half * 2, BOARD_HEIGHT);
+                g2.setComposite(old);
+                g2.setColor(new Color(255, 235, 250));
+                g2.fillRect(vx - half / 3, 0, (half / 3) * 2, BOARD_HEIGHT);
             }
         }
         g2.setComposite(old);
+    }
+
+    /** Blinking telegraph so the player can clear the lane before it turns lethal. */
+    private void drawWarningLine(Graphics2D g2, int cy) {
+        g2.setColor(new Color(255, 90, 90));
+        g2.fillRect(0, cy - 2, BOARD_WIDTH, 4);
+    }
+
+    /** A live ray: outer glow, bright core, and the pack's Ray art as the emitter. */
+    private void drawBand(Graphics2D g2, Composite old, int cy, Color glow, Color core) {
+        int half = Boss.BEAM_HALF_THICKNESS;
+        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.45f));
+        g2.setColor(glow);
+        g2.fillRect(0, cy - half, BOARD_WIDTH, half * 2);
+        g2.setComposite(old);
+        g2.setColor(core);
+        g2.fillRect(0, cy - half / 3, BOARD_WIDTH, (half / 3) * 2);
+        // Emitter flare at the edge the ray fires from.
+        var flare = GifSprites.beam(activeBoss.getFaction(), Boss.SPRITE_SIZE);
+        if (flare.length > 0) {
+            var f = flare[(frame / 3) % flare.length];
+            g2.drawImage(f, BOARD_WIDTH - f.getWidth(), cy - f.getHeight() / 2, this);
+        }
     }
 
     private void drawBoss(Graphics g) {
@@ -497,7 +469,7 @@ public class Scene1 extends JPanel {
             }
             g.translate(ox, oy);
 
-            drawMap(g);  // Draw background stars first
+            backdrop.draw(g); // parallax backdrop, behind everything
             drawExplosions(g);
             drawPowreUps(g);
             drawAliens(g);
@@ -557,6 +529,16 @@ public class Scene1 extends JPanel {
     private void update() {
 
 
+        // Follow the run into a new biome: the backdrop tracks the Director's
+        // current phase, so sky and roster always change together. A manual
+        // override (B key) lets a biome's art be reviewed without playing to it.
+        Faction biome = backdropOverride != null ? backdropOverride : spawnSource.biome();
+        if (biome != backdropBiome) {
+            backdropBiome = biome;
+            backdrop = Background.of(biome);
+        }
+        backdrop.update();
+
         // Check spawns for this frame (may be several). The Director gates waves
         // on how many enemies are still alive, so it holds the next wave until
         // the current one is cleared.
@@ -611,9 +593,14 @@ public class Scene1 extends JPanel {
                 shake(30, 12);
             }
 
+            // Cull by the bullet's own size — projectile sprites vary a lot
+            // (a rotated Torpedo canvas is 33px against Bullet.SIZE's 14), so a
+            // fixed margin would pop the big ones out while still on screen.
             int bx = bullet.getX();
             int by = bullet.getY();
-            if (bx < -Bullet.SIZE || bx > BOARD_WIDTH || by < -Bullet.SIZE || by > BOARD_HEIGHT) {
+            int bw = bullet.getImage().getWidth(null);
+            int bh = bullet.getImage().getHeight(null);
+            if (bx < -bw || bx > BOARD_WIDTH || by < -bh || by > BOARD_HEIGHT) {
                 bullet.die();
             }
 
@@ -642,7 +629,8 @@ public class Scene1 extends JPanel {
 
                             enemy.setDying(true);
                             // That ship's own destruction animation, centred on it.
-                            explosions.add(new Destruction(enemy.getShipName(), enemyX, enemyY,
+                            explosions.add(new Destruction(enemy.getFaction(),
+                                    enemy.getShipName(), enemyX, enemyY,
                                     enemy.getSpriteSize() + 24));
                             Sfx.enemyExplode();
                             deaths++;
@@ -672,14 +660,32 @@ public class Scene1 extends JPanel {
         }
         shots.removeAll(shotsToRemove);
 
-        // Boss beam: while firing, anything in the band left of the boss dies.
-        if (activeBoss != null && activeBoss.isBeamFiring() && player.isVisible()) {
-            int cy = activeBoss.getBeamCenterY();
+        // Boss rays: the bands span the whole board, so being caught in any one
+        // of them is fatal regardless of how far left the player has run. Rays
+        // still arming are excluded — their blink is a warning, not a hazard.
+        if (activeBoss != null && player.isVisible()) {
             int half = Boss.BEAM_HALF_THICKNESS;
             int pTop = player.getY();
             int pBottom = pTop + player.getImage().getHeight(null);
-            boolean inBand = pBottom > cy - half && pTop < cy + half;
-            if (inBand && player.getX() < activeBoss.getX()) {
+            boolean hit = false;
+            int[] perm = activeBoss.getPermanentRays();
+            for (int i = 0; i < activeBoss.getArmedRayCount() && !hit; i++) {
+                hit = pBottom > perm[i] - half && pTop < perm[i] + half;
+            }
+            if (activeBoss.isBeamFiring()) {
+                for (int cy : activeBoss.getBeamBands()) {
+                    hit |= pBottom > cy - half && pTop < cy + half;
+                }
+            }
+            // Vertical ray: same test on the other axis.
+            if (activeBoss.isVerticalFiring()) {
+                int vhalf = Boss.VBEAM_HALF_THICKNESS;
+                int vx = activeBoss.getVerticalRay();
+                int pLeft = player.getX();
+                int pRight = pLeft + player.getImage().getWidth(null);
+                hit |= pRight > vx - vhalf && pLeft < vx + vhalf;
+            }
+            if (hit) {
                 player.setImage(Images.load(IMG_EXPLOSION));
                 player.setDying(true);
                 Sfx.playerDeath();
@@ -698,14 +704,17 @@ public class Scene1 extends JPanel {
             powerups.add(new WeaponUp(bx, by - 50));
             powerups.add(new WeaponUp(bx, by + 50));
             powerups.add(new SpeedUp(bx, by));
-            // Big flagship wreck, plus two smaller secondary blasts.
-            explosions.add(new Destruction(activeBoss.getShipName(), bx, by,
+            // Big flagship wreck, plus two smaller secondary blasts, all in the
+            // boss's own faction's art.
+            Faction bf = activeBoss.getFaction();
+            explosions.add(new Destruction(bf, activeBoss.getShipName(), bx, by,
                     activeBoss.getSpriteSize() + 60));
-            explosions.add(new Destruction("Fighter", bx - 50, by - 35, 70));
-            explosions.add(new Destruction("Fighter", bx + 45, by + 30, 70));
+            explosions.add(new Destruction(bf, "Fighter", bx - 50, by - 35, 70));
+            explosions.add(new Destruction(bf, "Fighter", bx + 45, by + 30, 70));
             Sfx.bossDeath();
             shake(35, 14);
             activeBoss = null;
+            player.setDuelZone(false);
             bossesBeaten++;
         }
 
@@ -788,13 +797,19 @@ public class Scene1 extends JPanel {
     // spawn-type logic lives, shared by the static source now and the Stage 4
     // Director later.
     private void spawn(SpawnDetails sd) {
-        // Boss gate — spawn a real boss that holds back the next wave until killed.
+        // Boss gate — spawn a real boss that holds back the next wave until
+        // killed. Encoded by the Director as BOSS:<faction>:<name>.
         if (sd.type.startsWith("BOSS:")) {
-            String name = sd.type.substring(5);
-            Boss boss = new Boss(name, sd.x, sd.y, BOSS_HP);
+            String[] parts = sd.type.split(":", 3);
+            Faction faction = Faction.valueOf(parts[1]);
+            String name = parts[2];
+            Boss boss = new Boss(faction, name, sd.x, sd.y, BOSS_HP, bossRng);
             boss.setHomeX(BOARD_WIDTH - 200);
             enemies.add(boss);
             activeBoss = boss;
+            // The mirror duel gives the player the left half instead of the
+            // left third — vertical rays need room to dodge sideways.
+            player.setDuelZone(boss.getMoveset() == Boss.Moveset.NEMESIS);
             bossBannerTimer = 150;
             Sfx.bossWarn();
             shake(18, 6);
@@ -848,6 +863,22 @@ public class Scene1 extends JPanel {
             player.keyPressed(e);
             if (key == KeyEvent.VK_SPACE) {
                 firing = true; // actual firing cadence is handled in update()
+            }
+            if (key == KeyEvent.VK_B) {
+                Faction[] all = Faction.values();
+                int i = backdropOverride == null ? 0 : backdropOverride.ordinal() + 1;
+                backdropOverride = all[i % all.length];
+                System.out.println("[backdrop] " + backdropOverride);
+            }
+            if (key == KeyEvent.VK_N) {
+                backdropOverride = null;
+                System.out.println("[backdrop] following the run");
+            }
+            // Biome 3 has no enemy roster yet, so the run can't reach Nemesis
+            // on its own. V summons it for play-testing.
+            if (key == KeyEvent.VK_V && activeBoss == null) {
+                spawn(new SpawnDetails(frame, "BOSS:VOID:NEMESIS",
+                        BOARD_WIDTH, BOARD_HEIGHT / 2));
             }
         }
     }

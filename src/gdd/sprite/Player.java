@@ -10,8 +10,16 @@ public class Player extends Sprite {
     private static final int START_X = 60;
     private static final int START_Y = 340;
     // Danmaku dodging zone: the player roams the left third of the board in 2D.
-    private static final int ZONE_MIN_X = 20;
+    public static final int ZONE_MIN_X = 20;
     private static final int ZONE_MAX_X = BOARD_WIDTH / 3;
+    /**
+     * Widened for the mirror duel. Vertical rays only work as a threat if
+     * there's room to dodge sideways, and you-left / Nemesis-right reads as a
+     * duel rather than a siege. Public so the boss can place its vertical rays
+     * against the same bounds the player is actually confined to.
+     */
+    public static final int DUEL_ZONE_MAX_X = BOARD_WIDTH / 2;
+    private int zoneMaxX = ZONE_MAX_X;
     private static final int MAX_SPEED = 12; // cap so stacked drops stay controllable
     private int currentSpeed = 4;
 
@@ -40,6 +48,15 @@ public class Player extends Sprite {
 
     public int getSpeed() {
         return currentSpeed;
+    }
+
+    /** Widens the movement zone for the mirror duel, and back again after it. */
+    public void setDuelZone(boolean duel) {
+        zoneMaxX = duel ? DUEL_ZONE_MAX_X : ZONE_MAX_X;
+    }
+
+    public int getZoneMaxX() {
+        return zoneMaxX;
     }
 
     public int getWeaponLevel() {
@@ -79,7 +96,7 @@ public class Player extends Sprite {
             }
         }
 
-        int rightBound = ZONE_MAX_X - getImage().getWidth(null);
+        int rightBound = zoneMaxX - getImage().getWidth(null);
         int bottomBound = BOARD_HEIGHT - BORDER_BOTTOM - getImage().getHeight(null);
 
         if (x <= ZONE_MIN_X) {

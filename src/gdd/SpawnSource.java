@@ -18,4 +18,13 @@ public interface SpawnSource {
      * @return the spawns that should be created this frame (empty if none)
      */
     List<SpawnDetails> poll(int frame, int aliveEnemies);
+
+    /**
+     * Which biome the run is currently in. The scene watches this to swap the
+     * backdrop, so the visuals follow the phase timeline without the Director
+     * and the renderer having to know about each other.
+     */
+    default Faction biome() {
+        return Faction.NAIRAN;
+    }
 }

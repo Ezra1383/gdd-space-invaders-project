@@ -60,6 +60,38 @@ public final class Images {
                 Math.max(1, (int) Math.round(h * factor)));
     }
 
+    /**
+     * Integer upscale with nearest-neighbour, keeping pixel art crisp. Use this
+     * for source art authored at a small native size (the 272x160 background
+     * plates); {@link #scaledBy} smooths, which turns pixel art to mush.
+     */
+    public static BufferedImage pixelScaled(String path, int factor) {
+        BufferedImage src = load(path);
+        int w = src.getWidth() * factor;
+        int h = src.getHeight() * factor;
+        BufferedImage dst = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = dst.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+                RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+        g.drawImage(src, 0, 0, w, h, null);
+        g.dispose();
+        return dst;
+    }
+
+    /**
+     * Mirrors an image left-to-right. The player's jet is drawn facing right;
+     * the mirror-match boss wears the same art facing back at them.
+     */
+    public static BufferedImage flippedH(BufferedImage src) {
+        int w = src.getWidth();
+        int h = src.getHeight();
+        BufferedImage dst = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = dst.createGraphics();
+        g.drawImage(src, w, 0, 0, h, 0, 0, w, h, null); // destination x reversed
+        g.dispose();
+        return dst;
+    }
+
     private static BufferedImage scale(BufferedImage src, int w, int h) {
         BufferedImage dst = new BufferedImage(Math.max(1, w), Math.max(1, h),
                 BufferedImage.TYPE_INT_ARGB);
