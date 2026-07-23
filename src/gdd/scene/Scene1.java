@@ -2,12 +2,13 @@ package gdd.scene;
 
 import gdd.AudioPlayer;
 import gdd.Background;
-import gdd.Game;
-import static gdd.Global.*;
 import gdd.Director;
 import gdd.Faction;
+import gdd.Game;
 import gdd.GifSprites;
+import static gdd.Global.*;
 import gdd.Images;
+import gdd.RealityBreak;
 import gdd.Sfx;
 import gdd.SpawnDetails;
 import gdd.SpawnSource;
@@ -20,6 +21,7 @@ import gdd.sprite.Bullet;
 import gdd.sprite.Destruction;
 import gdd.sprite.Enemy;
 import gdd.sprite.EnemyType;
+import gdd.sprite.SheetBlast;
 import gdd.sprite.Player;
 import gdd.sprite.Shot;
 import gdd.sprite.Sprite;
@@ -60,15 +62,32 @@ public class Scene1 extends JPanel {
     private static final Image BULLET_COMET = Weapons.COMET;
     private static final double SHOT_SPEED = Weapons.SHOT_SPEED;
     private static final int FIRE_INTERVAL = 9; // frames between volleys while firing
+    // The tier-5 comet fires alone, so it hits for this much — makes the top
+    // tier the strongest DPS rather than the weakest.
+    private static final int COMET_DAMAGE = 4;
 
     private boolean firing = false;
     private int fireTimer = 0;
 
-    // Boss fight (Stage 7).
+    // Boss fight (Stage 7). BOSS_HP is the Nairan/Kla'ed bosses; Nemesis, the
+    // final boss, has its own so tuning it doesn't touch the others.
     private static final int BOSS_HP = 120;
+    private static final int NEMESIS_HP = 30;
     private Boss activeBoss;
     private int bossBannerTimer = 0;
     private int bossesBeaten = 0;
+
+    // Nemesis's final phase tears extra windows open at the screen edges. Bonus
+    // spectacle: the in-board attacks stay fully dodgeable without them, so this
+    // can be switched off with no effect on fairness.
+    private static final boolean REALITY_BREAK_ENABLED = true;
+    private RealityBreak realityBreak;
+
+    // Nemesis's death is a set-piece, not an instant vanish: the ship is torn
+    // apart over this many frames while the tears snap shut, ending in a flash.
+    private static final int NEMESIS_DEATH_FRAMES = 140;
+    private int nemesisDeathTimer = 0;
+    private int flash = 0; // white climax flash, counts down in the draw
 
     // Screen shake (Stage 9). Purely cosmetic, so it uses its own unseeded RNG
     // and never touches the Director's reproducible stream.
@@ -156,6 +175,10 @@ public class Scene1 extends JPanel {
 
     public void stop() {
         timer.stop();
+        if (realityBreak != null) {
+            realityBreak.close();
+            realityBreak = null;
+        }
         try {
             if (audioPlayer != null) {
                 audioPlayer.stop();
@@ -194,6 +217,91 @@ public class Scene1 extends JPanel {
         shakeMag = magnitude;
     }
 
+    // --- Nemesis death set-piece -----------------------------------------
+
+    private void beginNemesisDeath() {
+        nemesisDeathTimer = NEMESIS_DEATH_FRAMES;
+        player.setDuelZone(false);        // the arena is ours again
+        if (realityBreak != null) {
+            realityBreak.collapse();      // reality reknits as it dies
+        }
+        Sfx.enemyExplode();
+        shake(22, 7);
+    }
+
+    /**
+     * Advances the finale one frame: blasts walk across the frozen hull, faster
+     * and harder as it goes, the tears retract, and the last frame detonates.
+     */
+    private void advanceNemesisDeath() {
+        nemesisDeathTimer--;
+        if (realityBreak != null) {
+            realityBreak.tickCollapse();
+            if (realityBreak.isClosed()) {
+                realityBreak = null;
+            }
+        }
+
+        int cx = activeBoss.getX() + activeBoss.getImage().getWidth(null) / 2;
+        int cy = activeBoss.getY() + activeBoss.getImage().getHeight(null) / 2;
+        int rw = activeBoss.getImage().getWidth(null);
+        int rh = activeBoss.getImage().getHeight(null);
+
+        double progress = 1.0 - nemesisDeathTimer / (double) NEMESIS_DEATH_FRAMES;
+        int interval = Math.max(4, 12 - (int) (9 * progress));
+        if (nemesisDeathTimer % interval == 0) {
+            addBlast(cx + shakeRng.nextInt(rw + 1) - rw / 2,
+                    cy + shakeRng.nextInt(rh + 1) - rh / 2, 3);
+            Sfx.enemyExplode();
+            shake(8, 4 + (int) (9 * progress));
+        }
+
+        if (nemesisDeathTimer <= 0) {
+            finishNemesisDeath(cx, cy);
+        }
+    }
+
+    private void finishNemesisDeath(int cx, int cy) {
+        for (int i = 0; i < 6; i++) {
+            addBlast(cx + shakeRng.nextInt(161) - 80, cy + shakeRng.nextInt(161) - 80, 5);
+        }
+        flash = 14;
+        shake(52, 20);
+        Sfx.bossDeath();
+        enemyBullets.clear();             // reality reknits — the shots wink out
+        if (realityBreak != null) {
+            realityBreak.close();
+            realityBreak = null;
+        }
+        int bx = activeBoss.getX() + activeBoss.getImage().getWidth(null) / 2;
+        int by = activeBoss.getY() + activeBoss.getImage().getHeight(null) / 2;
+        powerups.add(new WeaponUp(bx, by - 40));
+        powerups.add(new SpeedUp(bx, by + 40));
+        activeBoss.die();                 // hide it; the cull removes it next frame
+        activeBoss = null;
+        bossesBeaten++;
+        nemesisDeathTimer = 0;
+    }
+
+    /** A Nemesis-red explosion from the sprite sheet, centred on x,y. */
+    private void addBlast(int x, int y, int scale) {
+        explosions.add(new SheetBlast(x, y, true, scale));
+    }
+
+    /** Kills the player: its own blue sheet burst, plus sound and shake. */
+    private void killPlayer() {
+        if (player.isDying()) {
+            return;
+        }
+        int pcx = player.getX() + player.getImage().getWidth(null) / 2;
+        int pcy = player.getY() + player.getImage().getHeight(null) / 2;
+        explosions.add(new SheetBlast(pcx, pcy, false, 3)); // blue = the player
+        player.setImage(Images.load(IMG_EXPLOSION));
+        player.setDying(true);
+        Sfx.playerDeath();
+        shake(30, 12);
+    }
+
     // Resets the whole run after a Game Over so the player can play again.
     private void restart() {
         frame = 0;
@@ -206,6 +314,12 @@ public class Scene1 extends JPanel {
         fireTimer = 0;
         message = "Game Over";
         inGame = true;
+        nemesisDeathTimer = 0;
+        flash = 0;
+        if (realityBreak != null) {
+            realityBreak.close();
+            realityBreak = null;
+        }
         loadSpawnDetails(); // fresh Director
         gameInit();         // fresh player + entity lists
         if (!timer.isRunning()) {
@@ -238,8 +352,9 @@ public class Scene1 extends JPanel {
                 }
             }
 
-            if (enemy.isDying()) {
-
+            // Dying enemies hide themselves next frame — except Nemesis, which
+            // stays on screen (frozen) so its death set-piece can tear it apart.
+            if (enemy.isDying() && !(enemy == activeBoss && nemesisDeathTimer > 0)) {
                 enemy.die();
             }
         }
@@ -481,6 +596,18 @@ public class Scene1 extends JPanel {
 
             g.translate(-ox, -oy);
 
+            // Climax flash: a white blaze over everything as Nemesis detonates.
+            if (flash > 0) {
+                Graphics2D g2 = (Graphics2D) g;
+                Composite oldc = g2.getComposite();
+                g2.setComposite(AlphaComposite.getInstance(
+                        AlphaComposite.SRC_OVER, Math.min(1f, flash / 14f)));
+                g2.setColor(Color.WHITE);
+                g2.fillRect(0, 0, BOARD_WIDTH, BOARD_HEIGHT);
+                g2.setComposite(oldc);
+                flash--;
+            }
+
         } else {
 
             if (timer.isRunning()) {
@@ -623,7 +750,7 @@ public class Scene1 extends JPanel {
                         shot.die();
                         shotsToRemove.add(shot);
 
-                        if (enemy.hit()) { // reduce HP; true when it dies
+                        if (enemy.hit(shot.getDamage())) { // reduce HP; true when it dies
                             int enemyX = enemy.getX() + enemy.getImage().getWidth(null) / 2;
                             int enemyY = enemy.getY() + enemy.getImage().getHeight(null) / 2;
 
@@ -698,7 +825,8 @@ public class Scene1 extends JPanel {
         if (bossBannerTimer > 0) {
             bossBannerTimer--;
         }
-        if (activeBoss != null && activeBoss.isDying()) {
+        if (activeBoss != null && activeBoss.isDying()
+                && activeBoss.getMoveset() != Boss.Moveset.NEMESIS) {
             int bx = activeBoss.getX() + activeBoss.getImage().getWidth(null) / 2;
             int by = activeBoss.getY() + activeBoss.getImage().getHeight(null) / 2;
             powerups.add(new WeaponUp(bx, by - 50));
@@ -716,6 +844,40 @@ public class Scene1 extends JPanel {
             activeBoss = null;
             player.setDuelZone(false);
             bossesBeaten++;
+        }
+
+        // Nemesis dies as a set-piece: begin it once, then advance it. The boss
+        // has no wreck art (it's the player's own jet, not a ship pack), so the
+        // finale is procedural — the hull torn apart while the tears snap shut.
+        if (activeBoss != null && activeBoss.isDying()
+                && activeBoss.getMoveset() == Boss.Moveset.NEMESIS
+                && nemesisDeathTimer == 0) {
+            beginNemesisDeath();
+        }
+        if (nemesisDeathTimer > 0) {
+            advanceNemesisDeath();
+        }
+
+        // Reality break — Nemesis's final phase. Opened when it drops into that
+        // phase, torn down the instant the boss is gone, the player is dying, or
+        // the run has ended, so a window can never outlive the fight.
+        if (realityBreak != null && (activeBoss == null || !inGame
+                || player.isDying() || !activeBoss.isRealityBreaking())) {
+            realityBreak.close();
+            realityBreak = null;
+        }
+        if (REALITY_BREAK_ENABLED && inGame && !player.isDying()
+                && activeBoss != null && activeBoss.isRealityBreaking()
+                && !activeBoss.isDying()) { // the death sequence collapses them
+            if (realityBreak == null) {
+                realityBreak = new RealityBreak();
+                realityBreak.open(this);
+                if (realityBreak.isOpen()) {
+                    shake(24, 8);
+                    Sfx.bossWarn();
+                }
+            }
+            realityBreak.update(activeBoss);
         }
 
         // Cull dead enemies and any that have drifted off the left edge, so the
@@ -803,7 +965,8 @@ public class Scene1 extends JPanel {
             String[] parts = sd.type.split(":", 3);
             Faction faction = Faction.valueOf(parts[1]);
             String name = parts[2];
-            Boss boss = new Boss(faction, name, sd.x, sd.y, BOSS_HP, bossRng);
+            int hp = faction == Faction.VOID ? NEMESIS_HP : BOSS_HP;
+            Boss boss = new Boss(faction, name, sd.x, sd.y, hp, bossRng);
             boss.setHomeX(BOARD_WIDTH - 200);
             enemies.add(boss);
             activeBoss = boss;
@@ -875,8 +1038,15 @@ public class Scene1 extends JPanel {
                 System.out.println("[backdrop] following the run");
             }
             // Biome 3 has no enemy roster yet, so the run can't reach Nemesis
-            // on its own. V summons it for play-testing.
+            // on its own. V summons it for play-testing — with the endgame
+            // loadout the player would actually arrive with (maxed weapon, a few
+            // speed drops), so the fight reads at its real difficulty rather
+            // than a level-1 one that's ~3x harder than it will ever be.
             if (key == KeyEvent.VK_V && activeBoss == null) {
+                for (int i = 0; i < Player.MAX_WEAPON; i++) {
+                    player.upgradeWeapon();
+                }
+                player.setSpeed(8);
                 spawn(new SpawnDetails(frame, "BOSS:VOID:NEMESIS",
                         BOARD_WIDTH, BOARD_HEIGHT / 2));
             }
@@ -904,8 +1074,10 @@ public class Scene1 extends JPanel {
                 shots.add(new Shot(px, py, SHOT_SPEED, -3, BULLET_ORB));
                 shots.add(new Shot(px, py, SHOT_SPEED, 3, BULLET_ORB));
                 break;
-            default: // tier 5: big plasma beam
-                shots.add(new Shot(px, py, SHOT_SPEED + 3, 0, BULLET_COMET));
+            default: // tier 5: big plasma comet — one shot, but it hits hard, so
+                     // the top tier is the strongest DPS instead of (as a single
+                     // 1-damage slug) the weakest. COMET_DAMAGE is the knob.
+                shots.add(new Shot(px, py, SHOT_SPEED + 3, 0, BULLET_COMET, COMET_DAMAGE));
                 break;
         }
     }

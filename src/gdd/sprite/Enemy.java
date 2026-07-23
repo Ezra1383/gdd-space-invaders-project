@@ -107,10 +107,15 @@ public class Enemy extends Sprite {
         return maxHp;
     }
 
-    /** Applies one hit. Returns true if this hit destroys the enemy. */
+    /** Applies one point of damage. Returns true if it destroys the enemy. */
     public boolean hit() {
+        return hit(1);
+    }
+
+    /** Applies {@code damage} HP of damage. Returns true if it destroys the enemy. */
+    public boolean hit(int damage) {
         hitFlash = 4;
-        hp--;
+        hp -= damage;
         boolean dead = hp <= 0;
         if (!dead && shieldFrames.length > 0) {
             shieldIdx = 0; // flare the shield instead of a flat white flash

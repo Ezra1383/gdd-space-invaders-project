@@ -201,6 +201,25 @@ public class Boss extends Enemy {
         return moveset;
     }
 
+    /**
+     * The 2P red jet, facing right (the player's orientation). The reality-break
+     * windows draw clones of it, rotated per edge, so the tears are unmistakably
+     * more of us.
+     */
+    public static BufferedImage redJet() {
+        return Images.tile(IMG_SPRITES, RED_CELL_X, RED_CELL_Y,
+                RED_CELL_W, RED_CELL_H, NEMESIS_SCALE, SHIP_KEYS, 40);
+    }
+
+    /**
+     * True once Nemesis reaches its final phase — the fight has outgrown the
+     * board and reality starts tearing at the edges. Drives the satellite
+     * windows; the in-board attacks stay fully dodgeable without them.
+     */
+    public boolean isRealityBreaking() {
+        return moveset == Moveset.NEMESIS && arrived && hp <= maxHp * PHASE_VERTICAL;
+    }
+
     // --- exposed state for the scene's renderer and hit checks -------------
 
     public boolean isBeamCharging() {
@@ -266,6 +285,9 @@ public class Boss extends Enemy {
 
     @Override
     public void act() {
+        if (isDying()) {
+            return; // frozen while the death sequence tears it apart
+        }
         if (hitFlash > 0) {
             hitFlash--;
         }
