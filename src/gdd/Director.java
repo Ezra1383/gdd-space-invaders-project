@@ -29,12 +29,11 @@ public class Director implements SpawnSource {
     // --- Tunables (all safe to tweak) ---
 
     /**
-     * How long each phase runs before its boss gate. Real pacing is one boss
-     * every 10 minutes (10 min * 60 fps * 60 s = 36000 frames). Kept short here
-     * so a gate is observable within a normal play-test — set to 36000 for real
-     * play.
+     * How long each phase runs before its boss gate. 5400 frames = 90s at 60fps
+     * — long enough for waves to build tension, short enough that a boss is a
+     * regular beat rather than a 10-minute slog. (Was 1500/~25s for testing.)
      */
-    private static final int PHASE_FRAMES = 1500; // ~25s for testing
+    private static final int PHASE_FRAMES = 5400; // ~90s
 
     /** Breather (frames) between clearing a wave and the next one arriving. */
     private static final int WAVE_GAP = 40;

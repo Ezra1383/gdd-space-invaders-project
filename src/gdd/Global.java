@@ -37,4 +37,11 @@ public class Global {
     public static final String IMG_TITLE = "src/images/title.png";
     public static final String IMG_POWERUP_SPEEDUP = "src/images/powerup-s.png";
     public static final String IMG_SPRITES = "src/images/spites.png"; // sprite sheet
+    // Offense pickup spin strips (15 frames of 32x32): the player's weapon
+    // level-up (blue) and Nemesis's corruption shard (red).
+    public static final String IMG_POWERUP_WEAPON = "src/images/PowerUps/Offense/BluePickUp.png";
+    public static final String IMG_POWERUP_CORRUPTION = "src/images/PowerUps/Offense/NemesisPickUp.png";
+    // Clone pickup spin strip (15 frames of 32x32): a defensive drop that grants
+    // an extra ship — extra HP (soaks a lethal hit) and extra firepower.
+    public static final String IMG_POWERUP_CLONE = "src/images/PowerUps/Defensive/Clones.png";
 }

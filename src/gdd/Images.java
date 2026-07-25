@@ -79,6 +79,39 @@ public final class Images {
     }
 
     /**
+     * Blends an image toward a red "corrupted" version by {@code t} (0 = the
+     * original, 1 = fully red). The red version keeps the sprite's luminance
+     * structure but recolours it into Nemesis's palette, so the player's blue
+     * jet morphs cleanly into the red one as corruption climbs.
+     */
+    public static BufferedImage tintTowardRed(BufferedImage src, double t) {
+        int w = src.getWidth();
+        int h = src.getHeight();
+        BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int argb = src.getRGB(x, y);
+                int a = (argb >>> 24) & 255;
+                if (a == 0) {
+                    continue;
+                }
+                int r = (argb >> 16) & 255;
+                int g = (argb >> 8) & 255;
+                int b = argb & 255;
+                double lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                int rr = (int) Math.min(255, 70 + lum * 1.1);
+                int rg = (int) (lum * 0.30);
+                int rb = (int) (lum * 0.25);
+                int nr = (int) Math.round(r + (rr - r) * t);
+                int ng = (int) Math.round(g + (rg - g) * t);
+                int nb = (int) Math.round(b + (rb - b) * t);
+                out.setRGB(x, y, (a << 24) | (nr << 16) | (ng << 8) | nb);
+            }
+        }
+        return out;
+    }
+
+    /**
      * Mirrors an image left-to-right. The player's jet is drawn facing right;
      * the mirror-match boss wears the same art facing back at them.
      */
@@ -147,6 +180,31 @@ public final class Images {
         g.drawImage(cut, 0, 0, w * scale, h * scale, null);
         g.dispose();
         return dst;
+    }
+
+    /**
+     * Cuts a horizontal animation strip (frames laid left-to-right) into its
+     * frames, keeping each frame's existing alpha, and nearest-neighbour scales
+     * them. Unlike {@link #tile}, this does no colour-keying — use it for art
+     * that already ships with a transparent (RGBA) background, like the Offense
+     * pickup spin strips.
+     */
+    public static BufferedImage[] strip(String path, int frameW, int frameH, int scale) {
+        BufferedImage src = load(path);
+        int count = Math.max(1, src.getWidth() / frameW);
+        BufferedImage[] out = new BufferedImage[count];
+        for (int i = 0; i < count; i++) {
+            BufferedImage cell = src.getSubimage(i * frameW, 0, frameW, frameH);
+            BufferedImage dst = new BufferedImage(frameW * scale, frameH * scale,
+                    BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g = dst.createGraphics();
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+                    RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+            g.drawImage(cell, 0, 0, frameW * scale, frameH * scale, null);
+            g.dispose();
+            out[i] = dst;
+        }
+        return out;
     }
 
     private static int dist(int a, int b) {

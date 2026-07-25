@@ -1,6 +1,7 @@
 package gdd.sprite;
 
 import java.awt.Image;
+import java.awt.Rectangle;
 
 abstract public class Sprite {
 
@@ -19,6 +20,16 @@ abstract public class Sprite {
     }
 
     abstract public void act();
+
+    /**
+     * The rectangle used when something checks whether it has struck this
+     * sprite. Defaults to the full image; {@link Player} shrinks it to a small
+     * centred dot so danmaku is dodged on a fair grazing hitbox, not the whole
+     * hull.
+     */
+    public Rectangle getHitbox() {
+        return new Rectangle(x, y, getImage().getWidth(null), getImage().getHeight(null));
+    }
 
     public boolean collidesWith(Sprite other) {
         if (other == null || !this.isVisible() || !other.isVisible()) {

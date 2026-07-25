@@ -13,9 +13,12 @@ import gdd.Sfx;
 import gdd.SpawnDetails;
 import gdd.SpawnSource;
 import gdd.Weapons;
+import gdd.powerup.Clone;
+import gdd.powerup.Corruption;
 import gdd.powerup.PowerUp;
 import gdd.powerup.SpeedUp;
 import gdd.powerup.WeaponUp;
+import gdd.sprite.BlueSelf;
 import gdd.sprite.Boss;
 import gdd.sprite.Bullet;
 import gdd.sprite.Destruction;
@@ -72,7 +75,7 @@ public class Scene1 extends JPanel {
     // Boss fight (Stage 7). BOSS_HP is the Nairan/Kla'ed bosses; Nemesis, the
     // final boss, has its own so tuning it doesn't touch the others.
     private static final int BOSS_HP = 120;
-    private static final int NEMESIS_HP = 30;
+    private static final int NEMESIS_HP = 160; // the final boss — the tankiest fight
     private Boss activeBoss;
     private int bossBannerTimer = 0;
     private int bossesBeaten = 0;
@@ -89,6 +92,38 @@ public class Scene1 extends JPanel {
     private int nemesisDeathTimer = 0;
     private int flash = 0; // white climax flash, counts down in the draw
 
+    // Corruption: after Nemesis dies the run goes on, but kills start dropping
+    // shards that turn the player into Nemesis (redder + a forward Ray).
+    private boolean nemesisDefeated = false;
+    private static final int CORRUPTION_DROP_PERCENT = 45; // of drops, once unlocked
+    // The player's own Ray, earned through corruption: a piercing beam fired
+    // right, that damages every enemy in its lane. Stronger each stage.
+    private static final int PLAYER_RAY_FIRE_FRAMES = 12;
+    private int playerRayTimer = 0;   // frames until the next beam
+    private int playerRayActive = 0;  // frames the beam stays lethal
+
+    // Final loop: once fully corrupt, the roles swap and you fight your blue
+    // past self. You take the boss's right-side arena and its whole kit; the
+    // blue self is invincible and grinds down YOUR health bar — a fight you can
+    // only ever lose, sealing the loop.
+    private boolean finalLoop = false;
+    private BlueSelf blueSelf;
+    private List<Bullet> blueBullets;
+    private RealityBreak finalWindows;
+    private static final int FINAL_HEALTH = 60;
+    private int finalHealth = FINAL_HEALTH;
+    private int finalBannerTimer = 0;
+    // Your four-window Ray, aimed into the board at the blue self. The tears
+    // charge (telegraph) then fire an in-board crosshair band on its column/row.
+    private static final int WIN_IDLE = 96;
+    private static final int WIN_CHARGE = 55;
+    private static final int WIN_FIRE = 60;
+    private static final int WIN_RAY_HALF = 22;
+    private int winRayTimer = 0;
+    private int winRayPhase = 0; // 0 idle, 1 charging, 2 firing
+    private int winRayX = BOARD_WIDTH / 4;  // vertical band column (top/bottom tears)
+    private int winRayY = BOARD_HEIGHT / 2;  // horizontal band row (left/right tears)
+
     // Screen shake (Stage 9). Purely cosmetic, so it uses its own unseeded RNG
     // and never touches the Director's reproducible stream.
     private final Random shakeRng = new Random();
@@ -102,16 +137,18 @@ public class Scene1 extends JPanel {
     private String message = "Game Over";
 
     private final Dimension d = new Dimension(BOARD_WIDTH, BOARD_HEIGHT);
-    // Fixed seed so runs are reproducible while tuning. Swap to `new Random()`
-    // for a fresh, varied run each launch.
+    // Each launch is a fresh, varied run. Flip FIXED_SEED to true (with the seed
+    // below) when you need a reproducible run for tuning or bug-hunting.
+    private static final boolean FIXED_SEED = false;
     private static final long RUN_SEED = 20260719L;
-    private final Random randomizer = new Random(RUN_SEED);
+    private final long runSeed = FIXED_SEED ? RUN_SEED : System.nanoTime();
+    private final Random randomizer = new Random(runSeed);
     // Independent stream for kill-drop rolls, so drops don't perturb the
     // Director's wave generation.
-    private final Random dropRng = new Random(RUN_SEED + 1337);
-    // Likewise for boss ray placement — gameplay, so seeded and reproducible,
-    // but on its own stream so it can't shift wave generation.
-    private final Random bossRng = new Random(RUN_SEED + 991);
+    private final Random dropRng = new Random(runSeed + 1337);
+    // Likewise for boss ray placement — gameplay, but on its own stream so it
+    // can't shift wave generation.
+    private final Random bossRng = new Random(runSeed + 991);
     private static final int POWERUP_DROP_PERCENT = 20;
 
     private Timer timer;
@@ -178,6 +215,10 @@ public class Scene1 extends JPanel {
         if (realityBreak != null) {
             realityBreak.close();
             realityBreak = null;
+        }
+        if (finalWindows != null) {
+            finalWindows.close();
+            finalWindows = null;
         }
         try {
             if (audioPlayer != null) {
@@ -281,6 +322,7 @@ public class Scene1 extends JPanel {
         activeBoss = null;
         bossesBeaten++;
         nemesisDeathTimer = 0;
+        nemesisDefeated = true;           // corruption shards can now drop
     }
 
     /** A Nemesis-red explosion from the sprite sheet, centred on x,y. */
@@ -288,9 +330,48 @@ public class Scene1 extends JPanel {
         explosions.add(new SheetBlast(x, y, true, scale));
     }
 
+    /**
+     * Destroys an enemy: its wreck animation, sound, score, and a random drop.
+     * Shared by shot hits and the corrupted player Ray. Once Nemesis has fallen,
+     * a share of drops become corruption shards — the path to becoming Nemesis.
+     */
+    private void killEnemy(Enemy enemy) {
+        int ex = enemy.getX() + enemy.getImage().getWidth(null) / 2;
+        int ey = enemy.getY() + enemy.getImage().getHeight(null) / 2;
+        enemy.setDying(true);
+        explosions.add(new Destruction(enemy.getFaction(), enemy.getShipName(), ex, ey,
+                enemy.getSpriteSize() + 24));
+        Sfx.enemyExplode();
+        deaths++;
+
+        if (dropRng.nextInt(100) < POWERUP_DROP_PERCENT) {
+            int roll = dropRng.nextInt(100);
+            if (nemesisDefeated && !player.isFullyCorrupt() && roll < CORRUPTION_DROP_PERCENT) {
+                powerups.add(new Corruption(ex, ey));
+            } else if (roll < 45) {
+                powerups.add(new WeaponUp(ex, ey));
+            } else if (roll < 75) {
+                powerups.add(new SpeedUp(ex, ey));
+            } else {
+                powerups.add(new Clone(ex, ey)); // ~25% of drops: extra ship
+            }
+        }
+    }
+
     /** Kills the player: its own blue sheet burst, plus sound and shake. */
     private void killPlayer() {
         if (player.isDying()) {
+            return;
+        }
+        // A clone soaks the hit before the player can die: it bursts where the
+        // clone was, and the player fights on with one fewer.
+        if (player.absorbWithClone()) {
+            int[] off = player.cloneOffset(player.getClones()); // the one just spent
+            int cx = player.getX() + off[0] + player.getImage().getWidth(null) / 2;
+            int cy = player.getY() + off[1] + player.getImage().getHeight(null) / 2;
+            explosions.add(new SheetBlast(cx, cy, false, 3));
+            Sfx.playerDeath();
+            shake(14, 6);
             return;
         }
         int pcx = player.getX() + player.getImage().getWidth(null) / 2;
@@ -300,6 +381,320 @@ public class Scene1 extends JPanel {
         player.setDying(true);
         Sfx.playerDeath();
         shake(30, 12);
+    }
+
+    // --- corrupted player Ray --------------------------------------------
+
+    /** Half-thickness of the player's Ray band; wider the more corrupt you are. */
+    private static int rayHalf(int corruption) {
+        return 8 + corruption * 4; // 12 .. 28
+    }
+
+    /** Frames between the player's Ray shots; shorter the more corrupt you are. */
+    private static int rayCooldown(int corruption) {
+        return Math.max(30, 96 - corruption * 12); // 84 .. 36
+    }
+
+    /**
+     * Fires and sustains the player's forward Ray. While the beam is live, every
+     * enemy in its lane to the player's right takes damage each frame — the same
+     * signature attack Nemesis used, now turned on the horde.
+     */
+    private void updatePlayerRay() {
+        int c = player.getCorruption();
+        if (c <= 0 || !inGame || player.isDying()) {
+            playerRayActive = 0;
+            return;
+        }
+        if (playerRayActive > 0) {
+            playerRayActive--;
+            int cy = player.getY() + player.getImage().getHeight(null) / 2;
+            int half = rayHalf(c);
+            if (finalLoop) {
+                // The beam fires LEFT at the blue past self — which only flashes,
+                // never dies. You can hit it; you can never beat it.
+                if (blueSelf != null && blueSelf.isVisible()) {
+                    int top = blueSelf.getY();
+                    int bottom = top + blueSelf.getImage().getHeight(null);
+                    if (bottom > cy - half && top < cy + half
+                            && blueSelf.getX() < player.getX()) {
+                        blueSelf.hit();
+                    }
+                }
+            } else {
+                int px = player.getX() + player.getImage().getWidth(null);
+                for (Enemy e : enemies) {
+                    if (!e.isVisible() || e.isDying()) {
+                        continue;
+                    }
+                    int top = e.getY();
+                    int bottom = top + e.getImage().getHeight(null);
+                    int right = e.getX() + e.getImage().getWidth(null);
+                    if (bottom > cy - half && top < cy + half && right > px && e.hit(1)) {
+                        killEnemy(e); // does not touch the enemies list, safe mid-loop
+                    }
+                }
+            }
+        } else if (--playerRayTimer <= 0) {
+            playerRayActive = PLAYER_RAY_FIRE_FRAMES;
+            playerRayTimer = rayCooldown(c);
+            Sfx.shoot();
+        }
+    }
+
+    private void drawPlayerRay(Graphics g) {
+        if (playerRayActive <= 0 || player.getCorruption() <= 0 || !player.isVisible()) {
+            return;
+        }
+        int half = rayHalf(player.getCorruption());
+        int cy = player.getY() + player.getImage().getHeight(null) / 2;
+        // Fires left in the final loop (you're on the right now), else right.
+        int x0 = finalLoop ? 0 : player.getX() + player.getImage().getWidth(null);
+        int x1 = finalLoop ? player.getX() : BOARD_WIDTH;
+        Graphics2D g2 = (Graphics2D) g;
+        Composite oldc = g2.getComposite();
+        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.5f));
+        g2.setColor(new Color(255, 70, 90)); // outer red glow
+        g2.fillRect(x0, cy - half, x1 - x0, half * 2);
+        g2.setComposite(oldc);
+        g2.setColor(new Color(255, 220, 230)); // bright core
+        g2.fillRect(x0, cy - half / 3, x1 - x0, (half / 3) * 2);
+    }
+
+    // --- final loop: fighting your blue past self ------------------------
+
+    private void beginFinalLoop() {
+        finalLoop = true;
+        finalHealth = FINAL_HEALTH;
+        finalBannerTimer = 220;
+        winRayPhase = 0;
+        winRayTimer = 0;
+        fireTimer = 0;
+        enemies.clear();
+        enemyBullets.clear();
+        shots.clear();
+        powerups.clear();
+        activeBoss = null;
+        if (realityBreak != null) {
+            realityBreak.close();
+            realityBreak = null;
+        }
+        player.enterFinalArena();       // take the boss's right-side ground
+        blueSelf = new BlueSelf(60, BOARD_HEIGHT / 2 - 20);
+        blueBullets = new ArrayList<>();
+        finalWindows = new RealityBreak();
+        finalWindows.open(this);        // the four tears, now YOUR attack
+        message = "THE LOOP IS COMPLETE";
+        Sfx.bossWarn();
+        shake(30, 12);
+        System.out.println(">>> FINAL LOOP: you are Nemesis now — and you cannot win.");
+    }
+
+    private void updateFinalLoop() {
+        if (finalBannerTimer > 0) {
+            finalBannerTimer--;
+        }
+        if (player.isDying()) {
+            return;
+        }
+        int pcx = player.getX() + player.getImage().getWidth(null) / 2;
+        int pcy = player.getY() + player.getImage().getHeight(null) / 2;
+
+        // Your normal bullets, still fired (left) on top of the Ray — the tier-4
+        // spread and the tier-5 comet together, the way Nemesis fought you.
+        if (fireTimer > 0) {
+            fireTimer--;
+        }
+        if (firing && fireTimer <= 0) {
+            fireCorrupted();
+            fireTimer = FIRE_INTERVAL;
+        }
+        List<Shot> shotGone = new ArrayList<>();
+        for (Shot s : shots) {
+            s.act();
+            if (blueSelf != null && blueSelf.isVisible() && s.isVisible()
+                    && s.collidesWith(blueSelf)) {
+                blueSelf.hit();
+                s.die();
+            }
+            if (s.getX() < -40 || s.getX() > BOARD_WIDTH
+                    || s.getY() < -40 || s.getY() > BOARD_HEIGHT + 40) {
+                s.die();
+            }
+            if (!s.isVisible()) {
+                shotGone.add(s);
+            }
+        }
+        shots.removeAll(shotGone);
+
+        blueSelf.act(player.getY());
+        blueBullets.addAll(blueSelf.maybeFire(pcx, pcy));
+
+        List<Bullet> gone = new ArrayList<>();
+        for (Bullet b : blueBullets) {
+            b.act();
+            if (player.isVisible() && b.collidesWith(player)) {
+                finalHealth--;
+                b.die();
+                if (finalHealth % 8 == 0) {
+                    shake(5, 3);
+                }
+            }
+            int bw = b.getImage().getWidth(null);
+            int bh = b.getImage().getHeight(null);
+            if (b.getX() < -bw || b.getX() > BOARD_WIDTH
+                    || b.getY() < -bh || b.getY() > BOARD_HEIGHT) {
+                b.die();
+            }
+            if (!b.isVisible()) {
+                gone.add(b);
+            }
+        }
+        blueBullets.removeAll(gone);
+
+        updateWindowRays();
+
+        if (finalHealth <= 0) {
+            endFinalLoop();
+        }
+    }
+
+    /**
+     * Cycles the four-window Ray: idle → charge (telegraph) → fire. The tears
+     * and the in-board bands are driven together. When it fires, the crosshair
+     * band flashes the blue self it's caught (which, of course, never dies).
+     */
+    private void updateWindowRays() {
+        winRayTimer++;
+        if (winRayPhase == 0 && winRayTimer >= WIN_IDLE) {
+            winRayPhase = 1;
+            winRayTimer = 0;
+            if (blueSelf != null) { // aim the crosshair where the blue self is
+                winRayX = blueSelf.getX() + blueSelf.getImage().getWidth(null) / 2;
+                winRayY = blueSelf.getY() + blueSelf.getImage().getHeight(null) / 2;
+            }
+        } else if (winRayPhase == 1 && winRayTimer >= WIN_CHARGE) {
+            winRayPhase = 2;
+            winRayTimer = 0;
+        } else if (winRayPhase == 2 && winRayTimer >= WIN_FIRE) {
+            winRayPhase = 0;
+            winRayTimer = 0;
+        }
+        if (finalWindows != null) {
+            finalWindows.setShowState(winRayPhase == 1, winRayPhase == 2);
+        }
+        if (winRayPhase == 2 && blueSelf != null && blueSelf.isVisible()) {
+            int bx = blueSelf.getX() + blueSelf.getImage().getWidth(null) / 2;
+            int by = blueSelf.getY() + blueSelf.getImage().getHeight(null) / 2;
+            if (Math.abs(bx - winRayX) < WIN_RAY_HALF || Math.abs(by - winRayY) < WIN_RAY_HALF) {
+                blueSelf.hit();
+            }
+        }
+    }
+
+    /**
+     * Your corrupted fire: the tier-4 three-way spread and the tier-5 comet at
+     * once (the player's own blue weapons), sent left at the blue self.
+     */
+    private void fireCorrupted() {
+        Sfx.shoot();
+        int px = player.getX();                                  // left edge
+        int py = player.getY() + player.getImage().getHeight(null) / 2;
+        double s = -SHOT_SPEED;                                  // travels left
+        shots.add(new Shot(px, py, s, 0, BULLET_ORB));
+        shots.add(new Shot(px, py, s, -3, BULLET_ORB));
+        shots.add(new Shot(px, py, s, 3, BULLET_ORB));
+        shots.add(new Shot(px, py, s - 3, 0, BULLET_COMET, COMET_DAMAGE));
+    }
+
+    /** You fall. The loop closes — the villain always loses to the hero. */
+    private void endFinalLoop() {
+        int pcx = player.getX() + player.getImage().getWidth(null) / 2;
+        int pcy = player.getY() + player.getImage().getHeight(null) / 2;
+        explosions.add(new SheetBlast(pcx, pcy, true, 5)); // you die red
+        player.setImage(Images.load(IMG_EXPLOSION));
+        player.setDying(true);
+        Sfx.playerDeath();
+        shake(48, 16);
+        if (finalWindows != null) {
+            finalWindows.close();
+            finalWindows = null;
+        }
+        message = "THE LOOP IS COMPLETE";
+    }
+
+    private void drawFinalLoop(Graphics g) {
+        if (!finalLoop) {
+            return;
+        }
+        drawWindowRays(g);
+        for (Bullet b : blueBullets) {
+            if (b.isVisible()) {
+                g.drawImage(b.getImage(), b.getX(), b.getY(), this);
+            }
+        }
+        if (blueSelf != null && blueSelf.isVisible()) {
+            g.drawImage(blueSelf.getImage(), blueSelf.getX(), blueSelf.getY(), this);
+            if (blueSelf.getHitFlash() > 0) {
+                Graphics2D g2 = (Graphics2D) g;
+                Composite old = g2.getComposite();
+                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.45f));
+                g2.setColor(Color.WHITE);
+                g2.fillRect(blueSelf.getX(), blueSelf.getY(),
+                        blueSelf.getImage().getWidth(null), blueSelf.getImage().getHeight(null));
+                g2.setComposite(old);
+            }
+        }
+    }
+
+    /** The four-window Ray reaching into the board: a crosshair on the blue self. */
+    private void drawWindowRays(Graphics g) {
+        if (winRayPhase == 0) {
+            return;
+        }
+        Graphics2D g2 = (Graphics2D) g;
+        if (winRayPhase == 1) { // charging — blinking telegraph
+            if ((frame / 4) % 2 == 0) {
+                g2.setColor(new Color(120, 160, 255));
+                g2.fillRect(winRayX - 2, 0, 4, BOARD_HEIGHT);       // vertical
+                g2.fillRect(0, winRayY - 2, BOARD_WIDTH, 4);        // horizontal
+            }
+            return;
+        }
+        // firing — full crosshair bands from all four tears
+        int half = WIN_RAY_HALF;
+        Composite old = g2.getComposite();
+        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.45f));
+        g2.setColor(new Color(120, 170, 255));
+        g2.fillRect(winRayX - half, 0, half * 2, BOARD_HEIGHT);
+        g2.fillRect(0, winRayY - half, BOARD_WIDTH, half * 2);
+        g2.setComposite(old);
+        g2.setColor(new Color(235, 245, 255));
+        g2.fillRect(winRayX - half / 3, 0, (half / 3) * 2, BOARD_HEIGHT);
+        g2.fillRect(0, winRayY - half / 3, BOARD_WIDTH, (half / 3) * 2);
+    }
+
+    /** Your own boss-style health bar — the fight is now about your survival. */
+    private void drawFinalHealthBar(Graphics g) {
+        int barW = BOARD_WIDTH - 120;
+        int barH = 12;
+        int bx = 60;
+        int by = 54;
+        double frac = Math.max(0, finalHealth / (double) FINAL_HEALTH);
+        g.setColor(Color.DARK_GRAY);
+        g.fillRect(bx, by, barW, barH);
+        g.setColor(new Color(210, 40, 40));
+        g.fillRect(bx, by, (int) (barW * frac), barH);
+        g.setColor(Color.WHITE);
+        g.drawRect(bx, by, barW, barH);
+        g.drawString("NEMESIS (you)", bx, by - 4);
+        if (finalBannerTimer > 0) {
+            var f = new Font("Helvetica", Font.BOLD, 22);
+            g.setFont(f);
+            g.setColor(new Color(120, 160, 255));
+            String msg = "FIGHT YOUR PAST SELF — YOU CANNOT WIN";
+            g.drawString(msg, (BOARD_WIDTH - getFontMetrics(f).stringWidth(msg)) / 2, 110);
+        }
     }
 
     // Resets the whole run after a Game Over so the player can play again.
@@ -316,6 +711,20 @@ public class Scene1 extends JPanel {
         inGame = true;
         nemesisDeathTimer = 0;
         flash = 0;
+        nemesisDefeated = false;
+        playerRayTimer = 0;
+        playerRayActive = 0;
+        finalLoop = false;
+        finalHealth = FINAL_HEALTH;
+        finalBannerTimer = 0;
+        winRayPhase = 0;
+        winRayTimer = 0;
+        blueSelf = null;
+        blueBullets = null;
+        if (finalWindows != null) {
+            finalWindows.close();
+            finalWindows = null;
+        }
         if (realityBreak != null) {
             realityBreak.close();
             realityBreak = null;
@@ -379,6 +788,20 @@ public class Scene1 extends JPanel {
     private void drawPlayer(Graphics g) {
 
         if (player.isVisible()) {
+
+            // Clones: 60%-transparent copies of the ship, drawn behind it. Uses
+            // the player's live image, so they bank and redden along with it.
+            if (!player.isDying() && player.getClones() > 0) {
+                Graphics2D g2 = (Graphics2D) g;
+                Composite old = g2.getComposite();
+                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.6f));
+                for (int i = 0; i < player.getClones(); i++) {
+                    int[] off = player.cloneOffset(i);
+                    g2.drawImage(player.getImage(),
+                            player.getX() + off[0], player.getY() + off[1], this);
+                }
+                g2.setComposite(old);
+            }
 
             g.drawImage(player.getImage(), player.getX(), player.getY(), this);
         }
@@ -566,7 +989,18 @@ public class Scene1 extends JPanel {
         g.drawString("FRAME: " + frame, 10, 10);
         g.drawString("KILLS: " + deaths, 10, 24);
         if (player != null) {
-            g.drawString("WEAPON: Lv " + player.getWeaponLevel() + "  SPEED: " + player.getSpeed(), 10, 38);
+            String wpn = "WEAPON: Lv " + player.getWeaponLevel()
+                    + (player.getWeaponLevel() < Player.MAX_WEAPON
+                            ? " (" + player.getWeaponPips() + "/" + player.getWeaponPipsNeeded() + ")"
+                            : " MAX");
+            String clones = player.getClones() > 0
+                    ? "  CLONES: " + player.getClones() + "/" + Player.MAX_CLONES : "";
+            g.drawString(wpn + "  SPEED: " + player.getSpeed() + clones, 10, 38);
+            if (player.getCorruption() > 0) {
+                g.setColor(new Color(255, 90, 110));
+                g.drawString("CORRUPTION: " + player.getCorruption() + "/" + Player.MAX_CORRUPTION
+                        + (player.isFullyCorrupt() ? "  — YOU ARE NEMESIS" : ""), 10, 52);
+            }
         }
 
         g.setColor(Color.green);
@@ -589,10 +1023,15 @@ public class Scene1 extends JPanel {
             drawPowreUps(g);
             drawAliens(g);
             drawEnemyBullets(g);
+            drawFinalLoop(g); // the blue past self + its shots
             drawBeam(g);
+            drawPlayerRay(g); // the player's corrupted Ray, over the enemies
             drawPlayer(g);
             drawShot(g);
             drawBoss(g);
+            if (finalLoop) {
+                drawFinalHealthBar(g);
+            }
 
             g.translate(-ox, -oy);
 
@@ -666,6 +1105,15 @@ public class Scene1 extends JPanel {
         }
         backdrop.update();
 
+        // Final loop: your places have swapped and you fight your blue past
+        // self. A self-contained mode — none of the normal spawn/enemy logic.
+        if (finalLoop) {
+            player.act();
+            updatePlayerRay();
+            updateFinalLoop();
+            return;
+        }
+
         // Check spawns for this frame (may be several). The Director gates waves
         // on how many enemies are still alive, so it holds the next wave until
         // the current one is cleared.
@@ -683,10 +1131,15 @@ public class Scene1 extends JPanel {
         if (fireTimer > 0) {
             fireTimer--;
         }
-        if (firing && fireTimer <= 0 && inGame) {
+        if (firing && fireTimer <= 0 && inGame && !finalLoop) {
             fireWeapon();
             fireTimer = FIRE_INTERVAL;
         }
+
+        // Corrupted player Ray: an auto-firing piercing beam, once the player
+        // has taken on any of Nemesis. It gets stronger and more frequent as
+        // corruption climbs.
+        updatePlayerRay();
 
         // Power-ups
         for (PowerUp powerup : powerups) {
@@ -697,6 +1150,12 @@ public class Scene1 extends JPanel {
                     Sfx.powerup();
                 }
             }
+        }
+
+        // The transformation is complete — the final loop begins.
+        if (player.isFullyCorrupt()) {
+            beginFinalLoop();
+            return;
         }
 
         // Enemies — move, and fire danmaku volleys aimed at the player.
@@ -713,11 +1172,8 @@ public class Scene1 extends JPanel {
             bullet.act();
 
             if (player.isVisible() && bullet.collidesWith(player)) {
-                player.setImage(Images.load(IMG_EXPLOSION));
-                player.setDying(true);
+                killPlayer();
                 bullet.die();
-                Sfx.playerDeath();
-                shake(30, 12);
             }
 
             // Cull by the bullet's own size — projectile sprites vary a lot
@@ -751,27 +1207,7 @@ public class Scene1 extends JPanel {
                         shotsToRemove.add(shot);
 
                         if (enemy.hit(shot.getDamage())) { // reduce HP; true when it dies
-                            int enemyX = enemy.getX() + enemy.getImage().getWidth(null) / 2;
-                            int enemyY = enemy.getY() + enemy.getImage().getHeight(null) / 2;
-
-                            enemy.setDying(true);
-                            // That ship's own destruction animation, centred on it.
-                            explosions.add(new Destruction(enemy.getFaction(),
-                                    enemy.getShipName(), enemyX, enemyY,
-                                    enemy.getSpriteSize() + 24));
-                            Sfx.enemyExplode();
-                            deaths++;
-
-                            // Random powerup drop on kill — the only way to get
-                            // powerups now. Mixed: mostly weapon-ups, some speed.
-                            // Drifts left toward the player.
-                            if (dropRng.nextInt(100) < POWERUP_DROP_PERCENT) {
-                                if (dropRng.nextInt(100) < 55) {
-                                    powerups.add(new WeaponUp(enemyX, enemyY));
-                                } else {
-                                    powerups.add(new SpeedUp(enemyX, enemyY));
-                                }
-                            }
+                            killEnemy(enemy);
                         }
                     }
                 }
@@ -813,10 +1249,7 @@ public class Scene1 extends JPanel {
                 hit |= pRight > vx - vhalf && pLeft < vx + vhalf;
             }
             if (hit) {
-                player.setImage(Images.load(IMG_EXPLOSION));
-                player.setDying(true);
-                Sfx.playerDeath();
-                shake(30, 12);
+                killPlayer();
             }
         }
 
@@ -1043,12 +1476,18 @@ public class Scene1 extends JPanel {
             // speed drops), so the fight reads at its real difficulty rather
             // than a level-1 one that's ~3x harder than it will ever be.
             if (key == KeyEvent.VK_V && activeBoss == null) {
-                for (int i = 0; i < Player.MAX_WEAPON; i++) {
-                    player.upgradeWeapon();
-                }
+                player.maxWeapon();
                 player.setSpeed(8);
                 spawn(new SpawnDetails(frame, "BOSS:VOID:NEMESIS",
                         BOARD_WIDTH, BOARD_HEIGHT / 2));
+            }
+            // C: grant a corruption stage (play-testing the transformation
+            // without first grinding down Nemesis).
+            if (key == KeyEvent.VK_C) {
+                nemesisDefeated = true;
+                player.corrupt();
+                System.out.println("[corruption] " + player.getCorruption()
+                        + "/" + Player.MAX_CORRUPTION);
             }
         }
     }
@@ -1079,6 +1518,12 @@ public class Scene1 extends JPanel {
                      // 1-damage slug) the weakest. COMET_DAMAGE is the knob.
                 shots.add(new Shot(px, py, SHOT_SPEED + 3, 0, BULLET_COMET, COMET_DAMAGE));
                 break;
+        }
+
+        // Clones add fire: each lays down a straight orb from its own muzzle.
+        for (int i = 0; i < player.getClones(); i++) {
+            int[] off = player.cloneOffset(i);
+            shots.add(new Shot(px + off[0], py + off[1], SHOT_SPEED, 0, BULLET_ORB));
         }
     }
 }

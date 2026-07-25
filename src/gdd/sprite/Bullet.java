@@ -90,9 +90,11 @@ public class Bullet extends Sprite {
         int ch = Math.max(4, (int) (h * 0.55));
         int cx = x + (w - cw) / 2;
         int cy = y + (h - ch) / 2;
-        return cx < other.getX() + other.getImage().getWidth(null)
-                && cx + cw > other.getX()
-                && cy < other.getY() + other.getImage().getHeight(null)
-                && cy + ch > other.getY();
+        // Against the target's hitbox (a small dot for the player), not its hull.
+        java.awt.Rectangle ob = other.getHitbox();
+        return cx < ob.x + ob.width
+                && cx + cw > ob.x
+                && cy < ob.y + ob.height
+                && cy + ch > ob.y;
     }
 }

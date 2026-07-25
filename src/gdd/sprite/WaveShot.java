@@ -71,9 +71,10 @@ public class WaveShot extends Bullet {
         int ch = Math.max(4, (int) (h * CORE_H));
         int cx = x + (w - cw) / 2;
         int cy = y + (h - ch) / 2;
-        return cx < other.getX() + other.getImage().getWidth(null)
-                && cx + cw > other.getX()
-                && cy < other.getY() + other.getImage().getHeight(null)
-                && cy + ch > other.getY();
+        java.awt.Rectangle ob = other.getHitbox();
+        return cx < ob.x + ob.width
+                && cx + cw > ob.x
+                && cy < ob.y + ob.height
+                && cy + ch > ob.y;
     }
 }

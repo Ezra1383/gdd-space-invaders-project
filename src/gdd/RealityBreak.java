@@ -168,6 +168,18 @@ public final class RealityBreak {
         return satellites.isEmpty();
     }
 
+    /**
+     * Drives every tear's charge/fire look directly. In the final loop the
+     * caller owns the timing (so the in-board rays stay in sync), so the tears
+     * are told their state rather than cycling their own.
+     */
+    public void setShowState(boolean charging, boolean firing) {
+        for (Satellite s : satellites) {
+            s.setState(charging, firing);
+            s.tick();
+        }
+    }
+
     /** Closes every tear. Safe to call repeatedly. */
     public void close() {
         for (Satellite s : satellites) {

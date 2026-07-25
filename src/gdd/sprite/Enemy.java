@@ -13,6 +13,13 @@ public class Enemy extends Sprite {
     protected int fireInterval = 0;   // frames between volleys
     protected int fireCooldown = 0;   // frames until the next volley
     protected int shotCount = 0;      // volleys fired so far (drives SPIRAL etc.)
+    /**
+     * Short settle before the first shot once the enemy reaches its slot. The
+     * cooldown is frozen at the full interval during the fly-in, so without this
+     * the first shot lands a whole interval after arriving — long enough to be
+     * killed before firing. ~0.4s just lets them settle in.
+     */
+    private static final int SETTLE_BEFORE_FIRING = 24;
 
     // Fly-in-and-hold (Stage 5b). The enemy drifts left (dx) until it reaches
     // homeX, then stops and idles in place until killed.
@@ -206,6 +213,8 @@ public class Enemy extends Sprite {
                 homeY = y;
                 arrived = true;
                 dx = 0;
+                // Start firing shortly after settling, not a full interval later.
+                fireCooldown = Math.min(fireCooldown, SETTLE_BEFORE_FIRING);
             }
         } else {
             // Hold position with a gentle vertical bob so it reads as alive.
