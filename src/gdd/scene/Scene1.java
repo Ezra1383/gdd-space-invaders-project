@@ -1,6 +1,5 @@
 package gdd.scene;
 
-import gdd.AudioPlayer;
 import gdd.Background;
 import gdd.Director;
 import gdd.Faction;
@@ -8,6 +7,7 @@ import gdd.Game;
 import gdd.GifSprites;
 import static gdd.Global.*;
 import gdd.Images;
+import gdd.Music;
 import gdd.RealityBreak;
 import gdd.Sfx;
 import gdd.SpawnDetails;
@@ -16,7 +16,7 @@ import gdd.Weapons;
 import gdd.powerup.Clone;
 import gdd.powerup.Corruption;
 import gdd.powerup.PowerUp;
-import gdd.powerup.SpeedUp;
+import gdd.powerup.Shield;
 import gdd.powerup.WeaponUp;
 import gdd.sprite.BlueSelf;
 import gdd.sprite.Boss;
@@ -29,6 +29,7 @@ import gdd.sprite.Player;
 import gdd.sprite.Shot;
 import gdd.sprite.Sprite;
 import java.awt.AlphaComposite;
+import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Composite;
 import java.awt.Dimension;
@@ -36,6 +37,8 @@ import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Image;
+import java.awt.RenderingHints;
+import java.awt.Stroke;
 import java.awt.Toolkit;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -64,7 +67,7 @@ public class Scene1 extends JPanel {
     private static final Image BULLET_ORB = Weapons.ORB;
     private static final Image BULLET_COMET = Weapons.COMET;
     private static final double SHOT_SPEED = Weapons.SHOT_SPEED;
-    private static final int FIRE_INTERVAL = 9; // frames between volleys while firing
+    private static final int FIRE_INTERVAL = 12; // frames between volleys (~4.9/s)
     // The tier-5 comet fires alone, so it hits for this much — makes the top
     // tier the strongest DPS rather than the weakest.
     private static final int COMET_DAMAGE = 4;
@@ -151,11 +154,38 @@ public class Scene1 extends JPanel {
     private final Random bossRng = new Random(runSeed + 991);
     private static final int POWERUP_DROP_PERCENT = 20;
 
+    // Score. Points are already scaled up ("two extra zeros") so the counter
+    // climbs into the thousands and millions fast, which just reads better.
+    private long score = 0;
+    private int grazes = 0;
+    private static final int SCORE_PER_KILL = 1500;   // 15, ×100
+    private static final int SCORE_PER_GRAZE = 100;   // 1,  ×100
+    private static final int SCORE_BOSS_BONUS = 50000; // 500, ×100
+
     private Timer timer;
     private final Game game;
 
     private SpawnSource spawnSource;
-    private AudioPlayer audioPlayer;
+    private final Music music = new Music();
+    private boolean paused = false;
+    private boolean muted = false;
+
+    // Music tracks (WAV — Java's Clip can't play MP3). One theme per biome and
+    // per boss, indexed by Faction.ordinal(): NAIRAN=biome 1, KLAED=2, VOID=3.
+    // FinalMusic takes over once Nemesis falls and carries through the endgame.
+    // Missing files fall back to scene1.wav, so tracks can be added one at a time.
+    private static final String MUSIC_FALLBACK = "src/audio/scene1.wav";
+    private static final String MUSIC_FINAL = "src/audio/Biom 3/FinalMusic.wav";
+    private static final String[] BIOME_TRACKS = {
+        "src/audio/Biom 1/Biom 1.wav", // NAIRAN
+        "src/audio/Biom 2/Biom 2.wav", // KLAED
+        "src/audio/Biom 3/Biom 3.wav", // VOID
+    };
+    private static final String[] BOSS_TRACKS = {
+        "src/audio/Biom 1/Boss 1.wav", // NAIRAN
+        "src/audio/Biom 2/Boss 2.wav", // KLAED
+        "src/audio/Biom 3/Boss3.wav",  // VOID (Nemesis)
+    };
 
     // Parallax backdrop. Swapped when the Director moves the run into a new
     // biome, so the sky changes with the roster rather than on its own timer.
@@ -176,13 +206,48 @@ public class Scene1 extends JPanel {
     }
 
     private void initAudio() {
-        try {
-            String filePath = "src/audio/scene1.wav";
-            audioPlayer = new AudioPlayer(filePath);
-            audioPlayer.play();
-        } catch (Exception e) {
-            System.err.println("Error initializing audio player: " + e.getMessage());
+        updateMusic(); // start the biome track (falls back to scene1.wav if absent)
+    }
+
+    /**
+     * Keeps the music in step with the run: the current biome's theme normally,
+     * the boss's theme while a boss is alive, then back to the biome theme when
+     * it dies. Missing tracks fall back — a boss with no track keeps the biome
+     * music; a biome with no track uses the shipped scene1.wav. Cheap to call
+     * every frame: {@link Music#play} no-ops when the wanted track is already on.
+     */
+    private void updateMusic() {
+        if (spawnSource == null) {
+            return;
         }
+        // Endgame: once Nemesis has fallen, the Final theme carries through
+        // becoming Nemesis and the final loop, overriding all biome/boss music.
+        if (nemesisDefeated) {
+            if (!music.play(MUSIC_FINAL)) {
+                music.play(MUSIC_FALLBACK);
+            }
+            return;
+        }
+        if (activeBoss != null) {
+            Faction f = activeBoss.getFaction();
+            if (music.play(bossTrack(f))) {
+                return;
+            }
+            if (music.play(biomeTrack(f))) {
+                return; // no boss track yet: keep the biome theme playing
+            }
+        } else if (music.play(biomeTrack(spawnSource.biome()))) {
+            return;
+        }
+        music.play(MUSIC_FALLBACK);
+    }
+
+    private static String biomeTrack(Faction biome) {
+        return BIOME_TRACKS[biome.ordinal()];
+    }
+
+    private static String bossTrack(Faction biome) {
+        return BOSS_TRACKS[biome.ordinal()];
     }
 
     private void loadSpawnDetails() {
@@ -220,13 +285,7 @@ public class Scene1 extends JPanel {
             finalWindows.close();
             finalWindows = null;
         }
-        try {
-            if (audioPlayer != null) {
-                audioPlayer.stop();
-            }
-        } catch (Exception e) {
-            System.err.println("Error closing audio player.");
-        }
+        music.stop();
     }
 
     private void gameInit() {
@@ -317,12 +376,14 @@ public class Scene1 extends JPanel {
         int bx = activeBoss.getX() + activeBoss.getImage().getWidth(null) / 2;
         int by = activeBoss.getY() + activeBoss.getImage().getHeight(null) / 2;
         powerups.add(new WeaponUp(bx, by - 40));
-        powerups.add(new SpeedUp(bx, by + 40));
+        powerups.add(new Clone(bx, by + 40));
         activeBoss.die();                 // hide it; the cull removes it next frame
         activeBoss = null;
         bossesBeaten++;
+        score += SCORE_BOSS_BONUS;
         nemesisDeathTimer = 0;
         nemesisDefeated = true;           // corruption shards can now drop
+        spawnSource.endBossGates();       // no second Nemesis during the corruption endgame
     }
 
     /** A Nemesis-red explosion from the sprite sheet, centred on x,y. */
@@ -343,17 +404,18 @@ public class Scene1 extends JPanel {
                 enemy.getSpriteSize() + 24));
         Sfx.enemyExplode();
         deaths++;
+        score += SCORE_PER_KILL;
 
         if (dropRng.nextInt(100) < POWERUP_DROP_PERCENT) {
             int roll = dropRng.nextInt(100);
             if (nemesisDefeated && !player.isFullyCorrupt() && roll < CORRUPTION_DROP_PERCENT) {
                 powerups.add(new Corruption(ex, ey));
-            } else if (roll < 45) {
+            } else if (roll < 50) {
                 powerups.add(new WeaponUp(ex, ey));
-            } else if (roll < 75) {
-                powerups.add(new SpeedUp(ex, ey));
+            } else if (roll < 78) {
+                powerups.add(new Clone(ex, ey));  // ~28% of drops: extra ship
             } else {
-                powerups.add(new Clone(ex, ey)); // ~25% of drops: extra ship
+                powerups.add(new Shield(ex, ey)); // ~22% of drops: hit shield
             }
         }
     }
@@ -372,6 +434,16 @@ public class Scene1 extends JPanel {
             explosions.add(new SheetBlast(cx, cy, false, 3));
             Sfx.playerDeath();
             shake(14, 6);
+            return;
+        }
+        // With no clones left, a shield breaks instead — a flash on the hull,
+        // then the player fights on with one fewer shield.
+        if (player.absorbWithShield()) {
+            int scx = player.getX() + player.getImage().getWidth(null) / 2;
+            int scy = player.getY() + player.getImage().getHeight(null) / 2;
+            explosions.add(new SheetBlast(scx, scy, false, 2));
+            Sfx.playerDeath();
+            shake(10, 5);
             return;
         }
         int pcx = player.getX() + player.getImage().getWidth(null) / 2;
@@ -679,7 +751,7 @@ public class Scene1 extends JPanel {
         int barW = BOARD_WIDTH - 120;
         int barH = 12;
         int bx = 60;
-        int by = 54;
+        int by = BOARD_HEIGHT - 40;
         double frac = Math.max(0, finalHealth / (double) FINAL_HEALTH);
         g.setColor(Color.DARK_GRAY);
         g.fillRect(bx, by, barW, barH);
@@ -701,10 +773,14 @@ public class Scene1 extends JPanel {
     private void restart() {
         frame = 0;
         deaths = 0;
+        score = 0;
+        grazes = 0;
         bossesBeaten = 0;
         activeBoss = null;
         bossBannerTimer = 0;
         shakeTimer = 0;
+        paused = false;          // never resume a fresh run frozen
+        music.setPaused(false);
         firing = false;
         fireTimer = 0;
         message = "Game Over";
@@ -804,6 +880,32 @@ public class Scene1 extends JPanel {
             }
 
             g.drawImage(player.getImage(), player.getX(), player.getY(), this);
+
+            // Shield bubble: one translucent cyan ring per stacked shield, drawn
+            // over the ship so the player can see how many hits are in reserve.
+            if (!player.isDying() && player.getShields() > 0) {
+                Graphics2D g2 = (Graphics2D) g;
+                int pcx = player.getX() + player.getImage().getWidth(null) / 2;
+                int pcy = player.getY() + player.getImage().getHeight(null) / 2;
+                Composite old = g2.getComposite();
+                Stroke oldStroke = g2.getStroke();
+                Object oldAA = g2.getRenderingHint(RenderingHints.KEY_ANTIALIASING);
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                        RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(new Color(120, 200, 255));
+                g2.setStroke(new BasicStroke(2f));
+                for (int i = 0; i < player.getShields(); i++) {
+                    g2.setComposite(AlphaComposite.getInstance(
+                            AlphaComposite.SRC_OVER, 0.22f + 0.10f * i));
+                    int r = 30 + i * 5;
+                    g2.drawOval(pcx - r, pcy - r, r * 2, r * 2);
+                }
+                g2.setComposite(old);
+                g2.setStroke(oldStroke);
+                if (oldAA != null) {
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, oldAA);
+                }
+            }
         }
 
         if (player.isDying()) {
@@ -920,12 +1022,12 @@ public class Scene1 extends JPanel {
     }
 
     private void drawBoss(Graphics g) {
-        // HP bar while the boss is on the field.
+        // HP bar along the bottom of the screen, clear of the top-left HUD.
         if (activeBoss != null && activeBoss.isVisible()) {
             int barW = BOARD_WIDTH - 120;
             int barH = 12;
             int bx = 60;
-            int by = 54;
+            int by = BOARD_HEIGHT - 40;
             double frac = Math.max(0, activeBoss.getHp() / (double) activeBoss.getMaxHp());
             g.setColor(Color.DARK_GRAY);
             g.fillRect(bx, by, barW, barH);
@@ -985,26 +1087,6 @@ public class Scene1 extends JPanel {
         g.setColor(Color.black);
         g.fillRect(0, 0, d.width, d.height);
 
-        g.setColor(Color.white);
-        g.drawString("FRAME: " + frame, 10, 10);
-        g.drawString("KILLS: " + deaths, 10, 24);
-        if (player != null) {
-            String wpn = "WEAPON: Lv " + player.getWeaponLevel()
-                    + (player.getWeaponLevel() < Player.MAX_WEAPON
-                            ? " (" + player.getWeaponPips() + "/" + player.getWeaponPipsNeeded() + ")"
-                            : " MAX");
-            String clones = player.getClones() > 0
-                    ? "  CLONES: " + player.getClones() + "/" + Player.MAX_CLONES : "";
-            g.drawString(wpn + "  SPEED: " + player.getSpeed() + clones, 10, 38);
-            if (player.getCorruption() > 0) {
-                g.setColor(new Color(255, 90, 110));
-                g.drawString("CORRUPTION: " + player.getCorruption() + "/" + Player.MAX_CORRUPTION
-                        + (player.isFullyCorrupt() ? "  — YOU ARE NEMESIS" : ""), 10, 52);
-            }
-        }
-
-        g.setColor(Color.green);
-
         if (inGame) {
 
             // Screen shake: offset the whole scene, decaying to zero.
@@ -1047,6 +1129,8 @@ public class Scene1 extends JPanel {
                 flash--;
             }
 
+            drawHud(g); // on top of the scene, so the backdrop can't cover it
+
         } else {
 
             if (timer.isRunning()) {
@@ -1056,7 +1140,61 @@ public class Scene1 extends JPanel {
             gameOver(g);
         }
 
+        if (paused) {
+            drawPauseOverlay(g);
+        }
+
         Toolkit.getDefaultToolkit().sync();
+    }
+
+    /** Dim veil + PAUSED, drawn over the frozen scene. */
+    private void drawPauseOverlay(Graphics g) {
+        Graphics2D g2 = (Graphics2D) g;
+        Composite oldc = g2.getComposite();
+        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.6f));
+        g2.setColor(Color.black);
+        g2.fillRect(0, 0, BOARD_WIDTH, BOARD_HEIGHT);
+        g2.setComposite(oldc);
+
+        int cy = BOARD_HEIGHT / 2;
+        var big = new Font("Helvetica", Font.BOLD, 44);
+        g.setFont(big);
+        g.setColor(Color.white);
+        drawCentered(g, "PAUSED", cy - 10, big);
+        var small = new Font("Helvetica", Font.BOLD, 16);
+        g.setFont(small);
+        g.setColor(Color.lightGray);
+        drawCentered(g, "P  resume        M  " + (muted ? "unmute" : "mute"), cy + 30, small);
+    }
+
+    /** The play HUD. Drawn last, on top of the backdrop and sprites. */
+    private void drawHud(Graphics g) {
+        if (muted) {
+            g.setColor(Color.gray);
+            g.drawString("MUTED", BOARD_WIDTH - 60, 14);
+        }
+        g.setColor(Color.white);
+        g.drawString("FRAME: " + frame, 10, 14);
+        g.setColor(new Color(255, 220, 120));
+        g.drawString("SCORE: " + String.format("%,d", score), 10, 28);
+        g.setColor(Color.white);
+        g.drawString("KILLS: " + deaths + "   GRAZE: " + grazes, 10, 42);
+        if (player != null) {
+            String wpn = "WEAPON: Lv " + player.getWeaponLevel()
+                    + (player.getWeaponLevel() < Player.MAX_WEAPON
+                            ? " (" + player.getWeaponPips() + "/" + player.getWeaponPipsNeeded() + ")"
+                            : " MAX");
+            String clones = player.getClones() > 0
+                    ? "  CLONES: " + player.getClones() + "/" + Player.MAX_CLONES : "";
+            String shield = player.getShields() > 0
+                    ? "  SHIELD: " + player.getShields() + "/" + Player.MAX_SHIELDS : "";
+            g.drawString(wpn + clones + shield, 10, 56);
+            if (player.getCorruption() > 0) {
+                g.setColor(new Color(255, 90, 110));
+                g.drawString("CORRUPTION: " + player.getCorruption() + "/" + Player.MAX_CORRUPTION
+                        + (player.isFullyCorrupt() ? "  — YOU ARE NEMESIS" : ""), 10, 70);
+            }
+        }
     }
 
     private void gameOver(Graphics g) {
@@ -1073,12 +1211,17 @@ public class Scene1 extends JPanel {
         drawCentered(g, message, cy - 120, big);
 
         // Score lines
+        var scoreFont = new Font("Helvetica", Font.BOLD, 28);
+        g.setFont(scoreFont);
+        g.setColor(new Color(255, 220, 120));
+        drawCentered(g, "SCORE  " + String.format("%,d", score), cy - 70, scoreFont);
+
         var mid = new Font("Helvetica", Font.BOLD, 20);
         g.setFont(mid);
         g.setColor(Color.white);
-        drawCentered(g, "Kills: " + deaths, cy - 50, mid);
-        drawCentered(g, "Time survived: " + (frame / 60) + "s", cy - 20, mid);
-        drawCentered(g, "Bosses beaten: " + bossesBeaten, cy + 10, mid);
+        drawCentered(g, "Kills: " + deaths + "    Grazes: " + grazes, cy - 30, mid);
+        drawCentered(g, "Time survived: " + (frame / 60) + "s", cy - 2, mid);
+        drawCentered(g, "Bosses beaten: " + bossesBeaten, cy + 26, mid);
 
         // Prompt (timer is stopped here, so frame is frozen — keep it static).
         var small = new Font("Helvetica", Font.BOLD, 18);
@@ -1104,6 +1247,8 @@ public class Scene1 extends JPanel {
             backdrop = Background.of(biome);
         }
         backdrop.update();
+
+        updateMusic(); // biome theme, or the boss theme while a boss is alive
 
         // Final loop: your places have swapped and you fight your blue past
         // self. A self-contained mode — none of the normal spawn/enemy logic.
@@ -1174,6 +1319,20 @@ public class Scene1 extends JPanel {
             if (player.isVisible() && bullet.collidesWith(player)) {
                 killPlayer();
                 bullet.die();
+            } else if (player.isVisible() && !player.isDying() && !bullet.isGrazed()) {
+                // Near-miss: a bullet that skims the hull (inside the graze band
+                // but outside the kill hitbox) scores once, danmaku-style.
+                int pcx = player.getX() + player.getImage().getWidth(null) / 2;
+                int pcy = player.getY() + player.getImage().getHeight(null) / 2;
+                int bcx = bullet.getX() + bullet.getImage().getWidth(null) / 2;
+                int bcy = bullet.getY() + bullet.getImage().getHeight(null) / 2;
+                int ddx = pcx - bcx;
+                int ddy = pcy - bcy;
+                if (ddx * ddx + ddy * ddy <= Player.GRAZE_RADIUS * Player.GRAZE_RADIUS) {
+                    bullet.markGrazed();
+                    grazes++;
+                    score += SCORE_PER_GRAZE;
+                }
             }
 
             // Cull by the bullet's own size — projectile sprites vary a lot
@@ -1264,7 +1423,7 @@ public class Scene1 extends JPanel {
             int by = activeBoss.getY() + activeBoss.getImage().getHeight(null) / 2;
             powerups.add(new WeaponUp(bx, by - 50));
             powerups.add(new WeaponUp(bx, by + 50));
-            powerups.add(new SpeedUp(bx, by));
+            powerups.add(new Clone(bx, by));
             // Big flagship wreck, plus two smaller secondary blasts, all in the
             // boss's own faction's art.
             Faction bf = activeBoss.getFaction();
@@ -1277,6 +1436,7 @@ public class Scene1 extends JPanel {
             activeBoss = null;
             player.setDuelZone(false);
             bossesBeaten++;
+            score += SCORE_BOSS_BONUS;
         }
 
         // Nemesis dies as a set-piece: begin it once, then advance it. The boss
@@ -1412,10 +1572,6 @@ public class Scene1 extends JPanel {
             System.out.println(">>> BOSS INCOMING: " + name);
             return;
         }
-        if ("PowerUp-SpeedUp".equals(sd.type)) {
-            powerups.add(new SpeedUp(sd.x, sd.y));
-            return;
-        }
         // Otherwise it's an enemy: the type string names an EnemyType.
         Enemy enemy = new Enemy(EnemyType.fromString(sd.type), sd.x, sd.y);
         enemy.setHomeX(sd.targetX);
@@ -1423,6 +1579,10 @@ public class Scene1 extends JPanel {
     }
 
     private void doGameCycle() {
+        if (paused) {
+            repaint(); // keep drawing the PAUSED overlay, but freeze the sim
+            return;
+        }
         frame++;
         update();
         repaint();
@@ -1449,12 +1609,28 @@ public class Scene1 extends JPanel {
         @Override
         public void keyPressed(KeyEvent e) {
             int key = e.getKeyCode();
+            // Mute works anywhere — playing, paused, or on the Game Over screen.
+            if (key == KeyEvent.VK_M) {
+                muted = !muted;
+                music.setMuted(muted);
+                Sfx.setMuted(muted);
+                return;
+            }
             if (!inGame) {
                 // On the Game Over screen, SPACE restarts the run.
                 if (key == KeyEvent.VK_SPACE) {
                     restart();
                 }
                 return;
+            }
+            // Pause toggles the whole game (and the music) but leaves it drawn.
+            if (key == KeyEvent.VK_P) {
+                paused = !paused;
+                music.setPaused(paused);
+                return;
+            }
+            if (paused) {
+                return; // swallow gameplay input while paused
             }
             player.keyPressed(e);
             if (key == KeyEvent.VK_SPACE) {
@@ -1520,10 +1696,11 @@ public class Scene1 extends JPanel {
                 break;
         }
 
-        // Clones add fire: each lays down a straight orb from its own muzzle.
+        // Clones add fire: each lays down the level-1 pellet from its own muzzle,
+        // alongside the player's own (stronger) volley.
         for (int i = 0; i < player.getClones(); i++) {
             int[] off = player.cloneOffset(i);
-            shots.add(new Shot(px + off[0], py + off[1], SHOT_SPEED, 0, BULLET_ORB));
+            shots.add(new Shot(px + off[0], py + off[1], SHOT_SPEED, 0, BULLET_PELLET));
         }
     }
 }

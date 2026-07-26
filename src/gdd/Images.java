@@ -4,7 +4,15 @@ import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.File;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.metadata.IIOMetadata;
+import javax.imageio.metadata.IIOMetadataNode;
+import javax.imageio.stream.ImageInputStream;
+import org.w3c.dom.NodeList;
 
 /**
  * Robust image loading. Decodes with {@link ImageIO} (synchronous, into a
@@ -205,6 +213,102 @@ public final class Images {
             out[i] = dst;
         }
         return out;
+    }
+
+    /**
+     * Decodes an animated GIF into full-canvas frames, then keeps an even sample
+     * of at most {@code maxFrames} scaled to {@code targetH} px tall (bilinear).
+     *
+     * ImageIO returns each GIF frame as only the sub-rectangle that changed, at
+     * its own offset — drawing those raw would tear. This reassembles them onto a
+     * persistent canvas honouring each frame's offset and disposal, so a heavily
+     * optimised backdrop (like biome 3's 192-frame black hole) plays correctly
+     * while only a handful of composited frames are retained.
+     */
+    public static BufferedImage[] gifFramesScaled(String path, int maxFrames, int targetH) {
+        File file = new File(path);
+        try (ImageInputStream in = ImageIO.createImageInputStream(file)) {
+            Iterator<ImageReader> it = ImageIO.getImageReaders(in);
+            if (!it.hasNext()) {
+                return new BufferedImage[0];
+            }
+            ImageReader r = it.next();
+            r.setInput(in);
+            int n = r.getNumImages(true);
+            if (n <= 0) {
+                return new BufferedImage[0];
+            }
+            BufferedImage first = r.read(0);
+            int cw = first.getWidth();
+            int ch = first.getHeight();
+            BufferedImage canvas = new BufferedImage(cw, ch, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g = canvas.createGraphics();
+            int step = Math.max(1, n / Math.max(1, maxFrames));
+            double s = targetH / (double) ch;
+            int tw = Math.max(1, (int) Math.round(cw * s));
+            int th = Math.max(1, (int) Math.round(ch * s));
+            List<BufferedImage> out = new ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                BufferedImage frame = (i == 0) ? first : r.read(i);
+                int[] meta = gifFrameMeta(r.getImageMetadata(i));
+                g.drawImage(frame, meta[0], meta[1], null);
+                if (i % step == 0) {
+                    BufferedImage snap = new BufferedImage(tw, th, BufferedImage.TYPE_INT_ARGB);
+                    Graphics2D sg = snap.createGraphics();
+                    sg.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+                            RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                    sg.drawImage(canvas, 0, 0, tw, th, null);
+                    sg.dispose();
+                    out.add(snap);
+                }
+                if (meta[2] == 2) { // restoreToBackgroundColor: clear this frame's rect
+                    java.awt.Composite oc = g.getComposite();
+                    g.setComposite(java.awt.AlphaComposite.Clear);
+                    g.fillRect(meta[0], meta[1], frame.getWidth(), frame.getHeight());
+                    g.setComposite(oc);
+                }
+            }
+            g.dispose();
+            r.dispose();
+            return out.toArray(new BufferedImage[0]);
+        } catch (Exception e) {
+            System.err.println("Failed to read gif: " + path + " (" + e.getMessage() + ")");
+            return new BufferedImage[0];
+        }
+    }
+
+    /** GIF frame {left, top, disposal} — disposal 2 == restoreToBackgroundColor. */
+    private static int[] gifFrameMeta(IIOMetadata md) {
+        int left = 0;
+        int top = 0;
+        int disposal = 0;
+        try {
+            IIOMetadataNode root =
+                    (IIOMetadataNode) md.getAsTree("javax_imageio_gif_image_1.0");
+            NodeList d = root.getElementsByTagName("ImageDescriptor");
+            if (d.getLength() > 0) {
+                IIOMetadataNode nd = (IIOMetadataNode) d.item(0);
+                left = parseIntSafe(nd.getAttribute("imageLeftPosition"));
+                top = parseIntSafe(nd.getAttribute("imageTopPosition"));
+            }
+            NodeList gce = root.getElementsByTagName("GraphicControlExtension");
+            if (gce.getLength() > 0
+                    && "restoreToBackgroundColor".equals(
+                            ((IIOMetadataNode) gce.item(0)).getAttribute("disposalMethod"))) {
+                disposal = 2;
+            }
+        } catch (Exception ignore) {
+            // fall back to {0,0,0}: draw at origin, accumulate
+        }
+        return new int[] {left, top, disposal};
+    }
+
+    private static int parseIntSafe(String s) {
+        try {
+            return Integer.parseInt(s);
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     private static int dist(int a, int b) {

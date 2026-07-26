@@ -81,20 +81,26 @@ public final class Background {
      * now sits centred, behind the play area rather than off to one side.
      * The trade is that it's a single static image where the other animates.
      */
-    private static final String CELESTIAL =
-            "src/images/Background/BlackHole/CelestialObjects.png";
-    private static final Rectangle BLACK_HOLE_CELL = new Rectangle(256, 1, 128, 94);
-    /** 128x94 at 5x is 640x470 — dominant on a 716x700 board without touching the edges. */
-    private static final int BLACK_HOLE_SCALE = 5;
     /**
-     * Centring it puts the accretion disc's left arm straight across the
-     * player's dodging zone, at the altitude they spend most time at. At full
-     * strength that band measured luminance 48 — against 13 and 18 for the worst
-     * band in the other two biomes — dropping bullet contrast there to 3.5:1.
-     * The hole is the only thing in this sky, so it still dominates at this
-     * brightness; raise it and that stripe is what suffers.
+     * The black hole is a 1280x720, 192-frame animated glow. It's decoded,
+     * subsampled and scaled once at preload; only {@link #BLACK_HOLE_FRAMES}
+     * composited frames are retained. Scaled to overflow the board on every edge
+     * so it reads as a massive object the biome sits inside, with no visible
+     * frame seam.
      */
-    private static final double BLACK_HOLE_DIM = 0.40;
+    private static final String BLACK_HOLE_GIF =
+            "src/images/Background/BlackHole/Static_glow_around_black_hole_202607252226.gif";
+    private static final int BLACK_HOLE_FRAMES = 16;
+    /** 760px tall (from 720) overflows the 700 board; width 1351 overflows too. */
+    private static final int BLACK_HOLE_HEIGHT = 760;
+    private static final int BLACK_HOLE_TICKS = 4; // game frames per glow frame
+    /**
+     * How far the glow is dimmed. It sits centred, behind the play area, so its
+     * brightest band runs across the player's dodging zone; dropping it keeps
+     * enemy fire readable against it. Raise for a brighter hole at the cost of
+     * bullet contrast there.
+     */
+    private static final double BLACK_HOLE_DIM = 0.50;
 
     /** Rotations pre-rendered per wreck; they double as its tumble animation. */
     private static final int TUMBLE_STEPS = 12;
@@ -219,12 +225,12 @@ public final class Background {
         props.add(wreck(Faction.KLAED, "Bomber", 3));
         props.add(wreck(Faction.KLAED, "Battlecruiser", 2));
 
-        // The black hole: one fixed object, dead centre, and the only celestial
-        // body in the biome. Everything else here is wreckage.
-        Feature hole = new Feature("void:blackhole", 0, 0.5,
-                () -> new BufferedImage[]{
-                        dim(scale(sub(CELESTIAL, BLACK_HOLE_CELL), BLACK_HOLE_SCALE),
-                                BLACK_HOLE_DIM)});
+        // The black hole: one fixed, animated object, dead centre, and the only
+        // celestial body in the biome. Everything else here is wreckage.
+        Feature hole = new Feature("void:blackhole", BLACK_HOLE_TICKS, 0.5,
+                () -> dimAll(
+                        Images.gifFramesScaled(BLACK_HOLE_GIF, BLACK_HOLE_FRAMES, BLACK_HOLE_HEIGHT),
+                        BLACK_HOLE_DIM));
         return new Background(plates, props, hole);
     }
 
@@ -426,11 +432,6 @@ public final class Background {
         });
     }
 
-    /** One object cut out of a multi-object sheet. */
-    private static BufferedImage sub(String path, Rectangle cell) {
-        return Images.load(path).getSubimage(cell.x, cell.y, cell.width, cell.height);
-    }
-
     /** Slices a horizontal spritesheet into equal frames. */
     private static BufferedImage[] sheet(String path, int frameW) {
         BufferedImage s = Images.load(path);
@@ -499,6 +500,15 @@ public final class Background {
         at.translate((d - w) / 2.0, (d - h) / 2.0);
         g.drawImage(src, at, null);
         g.dispose();
+        return out;
+    }
+
+    /** Dims every frame of an animation (see {@link #dim}). */
+    private static BufferedImage[] dimAll(BufferedImage[] frames, double f) {
+        BufferedImage[] out = new BufferedImage[frames.length];
+        for (int i = 0; i < frames.length; i++) {
+            out[i] = dim(frames[i], f);
+        }
         return out;
     }
 

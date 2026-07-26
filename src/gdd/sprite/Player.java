@@ -52,6 +52,16 @@ public class Player extends Sprite {
         {-20, -30}, // clone 2: above us, a little to the left
     };
 
+    // Shields: hit-absorbing charges that sit BEHIND the clones — a hit spends a
+    // clone first, and only once none are left does a shield break. Stacks up to
+    // MAX_SHIELDS.
+    public static final int MAX_SHIELDS = 3;
+    private int shields = 0;
+
+    // Grazing: a near-miss band around the hull, wider than the kill hitbox.
+    // Bullets that pass within it (but don't hit) score points, danmaku-style.
+    public static final int GRAZE_RADIUS = 26;
+
     // Blue side-jet frames cut from spites.png (1P), keyed transparent.
     // Level flight, plus bank-up / bank-down frames used when moving vertically.
     private static final int[] SHIP_KEYS = {0x003663, 0x464646, 0x000000};
@@ -158,6 +168,29 @@ public class Player extends Sprite {
     public boolean absorbWithClone() {
         if (clones > 0) {
             clones--;
+            return true;
+        }
+        return false;
+    }
+
+    public int getShields() {
+        return shields;
+    }
+
+    /** Adds a shield, up to {@link #MAX_SHIELDS}. */
+    public void addShield() {
+        if (shields < MAX_SHIELDS) {
+            shields++;
+        }
+    }
+
+    /**
+     * Breaks a shield to absorb a hit — checked only after {@link #absorbWithClone}
+     * fails, so clones are always spent first. Returns true if a shield took it.
+     */
+    public boolean absorbWithShield() {
+        if (shields > 0) {
+            shields--;
             return true;
         }
         return false;

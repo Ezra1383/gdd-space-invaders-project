@@ -26,6 +26,8 @@ public class Bullet extends Sprite {
     private double fy;
     private final double vx;
     private final double vy;
+    /** Set once a near-miss has been scored, so a graze is counted only once. */
+    private boolean grazed;
 
     /**
      * @param cx centre x of the bullet at spawn
@@ -70,6 +72,14 @@ public class Bullet extends Sprite {
         fy += vy;
         x = (int) fx;
         y = (int) fy;
+    }
+
+    public boolean isGrazed() {
+        return grazed;
+    }
+
+    public void markGrazed() {
+        grazed = true;
     }
 
     /**

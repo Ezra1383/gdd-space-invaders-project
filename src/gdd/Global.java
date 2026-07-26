@@ -44,4 +44,7 @@ public class Global {
     // Clone pickup spin strip (15 frames of 32x32): a defensive drop that grants
     // an extra ship — extra HP (soaks a lethal hit) and extra firepower.
     public static final String IMG_POWERUP_CLONE = "src/images/PowerUps/Defensive/Clones.png";
+    // Shield pickup spin strip (15 frames of 32x32): a defensive drop granting a
+    // hit-absorbing shield that only takes damage once all clones are gone.
+    public static final String IMG_POWERUP_SHIELD = "src/images/PowerUps/Defensive/Sheilds.png";
 }

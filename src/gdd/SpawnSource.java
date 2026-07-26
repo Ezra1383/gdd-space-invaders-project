@@ -27,4 +27,12 @@ public interface SpawnSource {
     default Faction biome() {
         return Faction.NAIRAN;
     }
+
+    /**
+     * Stops any further boss gates from firing, while waves keep coming. The
+     * scene calls this once Nemesis has fallen, so the corruption endgame farms
+     * remnant waves without a second Nemesis ever spawning.
+     */
+    default void endBossGates() {
+    }
 }

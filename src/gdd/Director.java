@@ -44,8 +44,13 @@ public class Director implements SpawnSource {
     /** Hard ceiling on enemies per wave, so a wave never floods the screen. */
     private static final int MAX_WAVE_ENEMIES = 10;
 
-    /** Keep formations clear of the top/bottom edges. */
-    private static final int MARGIN_Y = 60;
+    // Keep formations inside the band the player can actually shoot. The spawn
+    // Y is the enemy's TOP-LEFT and the player's shots reach a centre-Y of about
+    // 31..619, so the bottom margin is deliberately larger — it has to leave room
+    // for the hull below Y and stay within the player's reach, or enemies parked
+    // near the bottom border can't be hit at all.
+    private static final int MARGIN_TOP_Y = 80;
+    private static final int MARGIN_BOTTOM_Y = 150;
     /** Band of columns where enemies settle and hold (right half of the board). */
     private static final int HOLD_MIN_X = BOARD_WIDTH / 2;
     private static final int HOLD_MAX_X = BOARD_WIDTH - 120;
@@ -70,6 +75,7 @@ public class Director implements SpawnSource {
 
     private boolean bossActive = false; // a boss fight is in progress
     private boolean bossEngaged = false; // the boss has actually appeared on-field
+    private boolean bossGatesEnded = false; // set once the finale (Nemesis) is done
 
     public Director(Random rng) {
         this.rng = rng;
@@ -79,8 +85,10 @@ public class Director implements SpawnSource {
 
     @Override
     public List<SpawnDetails> poll(int frame, int aliveEnemies) {
-        // Boss gate — time-based. Fires only when no boss fight is already going.
-        if (!bossActive && frame - phaseStartFrame >= currentPhase().durationFrames) {
+        // Boss gate — time-based. Fires only when no boss fight is already going,
+        // and never again once the finale boss has been beaten.
+        if (!bossActive && !bossGatesEnded
+                && frame - phaseStartFrame >= currentPhase().durationFrames) {
             fireBossGate(frame, currentPhase());
             bossActive = true;
             bossEngaged = false;
@@ -120,6 +128,11 @@ public class Director implements SpawnSource {
     @Override
     public Faction biome() {
         return currentPhase().biome;
+    }
+
+    @Override
+    public void endBossGates() {
+        bossGatesEnded = true;
     }
 
     private List<SpawnDetails> drain(int frame) {
@@ -264,14 +277,28 @@ public class Director implements SpawnSource {
                 List.of(EnemyType.KLAED_SCOUT, EnemyType.KLAED_FIGHTER,
                         EnemyType.KLAED_TORPEDO_SHIP),
                 List.of("Ravager", "Blight", "Iron Choir")));
-        // Phase 4 — the full armada. This is the phase the run loops on, so it
-        // has to stay interesting at higher difficulty laps.
+        // Phase 4 — the full armada.
         list.add(new Phase("Kla'ed Armada", Faction.KLAED, PHASE_FRAMES, 1.6,
                 List.of(Formation.SINGLE, Formation.COLUMN, Formation.WAVE, Formation.VEE),
                 List.of(EnemyType.KLAED_SCOUT, EnemyType.KLAED_FIGHTER,
                         EnemyType.KLAED_FRIGATE, EnemyType.KLAED_BOMBER,
                         EnemyType.KLAED_TORPEDO_SHIP, EnemyType.KLAED_BATTLECRUISER),
                 List.of("Void Sovereign", "Carrion King", "Kla'ed Prime")));
+
+        // --- Biome 3: the Void — the graveyard of the two beaten fleets ---
+        // The Void pack has no playable ships, so this finale is fought against
+        // the hardened remnants of the Nairan and Kla'ed fleets, and ends at the
+        // Nemesis gate (Faction.VOID → the Nemesis moveset). Beating it starts
+        // the corruption endgame in Scene1, which suppresses further boss gates —
+        // so the run loops this phase's remnant WAVES while the player corrupts,
+        // but no second Nemesis appears.
+        list.add(new Phase("The Void", Faction.VOID, PHASE_FRAMES, 1.6,
+                List.of(Formation.SINGLE, Formation.COLUMN, Formation.WAVE, Formation.VEE),
+                List.of(EnemyType.NAIRAN_FIGHTER, EnemyType.NAIRAN_FRIGATE,
+                        EnemyType.NAIRAN_BATTLECRUISER, EnemyType.KLAED_FIGHTER,
+                        EnemyType.KLAED_FRIGATE, EnemyType.KLAED_BOMBER,
+                        EnemyType.KLAED_TORPEDO_SHIP, EnemyType.KLAED_BATTLECRUISER),
+                List.of("Nemesis")));
         return list;
     }
 
@@ -317,8 +344,8 @@ public class Director implements SpawnSource {
         }
 
         List<SpawnDetails> build(Random rng, int frame, String type) {
-            final int minY = MARGIN_Y;
-            final int maxY = BOARD_HEIGHT - MARGIN_Y;
+            final int minY = MARGIN_TOP_Y;
+            final int maxY = BOARD_HEIGHT - MARGIN_BOTTOM_Y;
             // The column this formation holds at once it has flown in.
             final int home = randRange(rng, HOLD_MIN_X, HOLD_MAX_X);
             List<SpawnDetails> out = new ArrayList<>();

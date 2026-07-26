@@ -26,7 +26,18 @@ public final class Sfx {
     private static final Voice BOSS_WARN = voice(synthBossWarn(), 1);
     private static final Voice BOSS_DEATH = voice(synthBossDeath(), 1);
 
+    private static boolean muted = false;
+
     private Sfx() {
+    }
+
+    /** Silences (or restores) all sound effects. */
+    public static void setMuted(boolean m) {
+        muted = m;
+    }
+
+    public static boolean isMuted() {
+        return muted;
     }
 
     /**
@@ -91,7 +102,7 @@ public final class Sfx {
         }
 
         void play() {
-            if (pool == null) {
+            if (pool == null || muted) {
                 return;
             }
             try {
