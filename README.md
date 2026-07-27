@@ -36,8 +36,7 @@ shows you exactly what that's worth.
   you're doing, builds each wave out of formations on a growing budget, and drops a boss
   gate when the tension's right. Clear the authored run and it loops — harder, every lap.
 
-<!-- Screenshot slot: mid-run bullet pattern, biome 1 (Nairan) -->
-<!-- ![Dodging the Nairan](docs/screenshots/nairan-wave.png) -->
+![Dodging the Nairan](docs/screenshots/nairan-wave.png)
 
 ## The turn
 
@@ -64,8 +63,7 @@ You are the boss now. Somebody else is coming for you. The loop closes.
 
 > *"YOU NEVER LEARN, DO YOU?"*
 
-<!-- Screenshot slot: the final loop — red you vs. blue past self -->
-<!-- ![The final loop](docs/screenshots/finalloop.png) -->
+![The final loop](docs/screenshots/finalloop.png)
 
 ## Build the pilot you want
 
@@ -79,8 +77,7 @@ you'll want every pixel of control you've got.
 | **Shield** | A charge that breaks instead of you — but only *after* your clones are gone. Up to three. |
 | **Corruption** | Unlocked only after Nemesis falls. There is no way to put it back. |
 
-<!-- Screenshot slot: powered-up loadout / boss fight -->
-<!-- ![Boss fight](docs/screenshots/klaed-boss.png) -->
+![Boss fight](docs/screenshots/klaed-boss.png)
 
 ## Controls
 
@@ -121,6 +118,12 @@ browser for the pitch with a playable slice of the arena running in it.
 Pure Java and Swing — no game engine, no external libraries. A 60 FPS update/draw loop, a
 data-driven enemy roster, a runtime wave director, and sound effects synthesised in code.
 If you want the tour of how it all fits together, that's in **[Structure.md](Structure.md)**.
+
+## More screenshots
+
+| | | |
+|---|---|---|
+| ![A wave building mid-run](docs/screenshots/wave-biome1.png) | ![Blight, walled into its own arena](docs/screenshots/klaed-boss-alt.png) | ![Deep in the Nemesis fight](docs/screenshots/nemesis-overview.png) |
 
 ## Credits
 
