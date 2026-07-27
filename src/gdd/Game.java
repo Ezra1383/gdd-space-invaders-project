@@ -31,7 +31,7 @@ public class Game extends JFrame  {
 
     private void initUI() {
 
-        setTitle("Space Invaders");
+        setTitle("Reversal");
         setSize(Global.BOARD_WIDTH, Global.BOARD_HEIGHT);
 
         setDefaultCloseOperation(EXIT_ON_CLOSE);
