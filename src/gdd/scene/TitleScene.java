@@ -22,7 +22,7 @@ import javax.swing.Timer;
 
 public class TitleScene extends JPanel {
 
-    private static final int LOGO_HEIGHT = 92;
+    private static final int LOGO_HEIGHT = 48;
     private static final int LOGO_MARGIN = 16;
 
     private int frame = 0;

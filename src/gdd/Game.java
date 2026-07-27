@@ -3,6 +3,7 @@ package gdd;
 import gdd.scene.AboutScene;
 import gdd.scene.Scene1;
 import gdd.scene.TitleScene;
+import java.awt.Dimension;
 import javax.swing.JFrame;
 
 public class Game extends JFrame  {
@@ -32,10 +33,19 @@ public class Game extends JFrame  {
     private void initUI() {
 
         setTitle("Reversal");
-        setSize(Global.BOARD_WIDTH, Global.BOARD_HEIGHT);
 
         setDefaultCloseOperation(EXIT_ON_CLOSE);
         setResizable(false);
+
+        // setSize() sizes the whole window — title bar and borders included —
+        // which left the content pane 39px shorter and 16px narrower than the
+        // board, clipping anything drawn near the bottom or right edge (the
+        // boss HP bar sat entirely in the lost strip). Size the content pane
+        // and let pack() add the decorations on top.
+        getContentPane().setPreferredSize(
+                new Dimension(Global.BOARD_WIDTH, Global.BOARD_HEIGHT));
+        pack();
+
         setLocationRelativeTo(null);
 
     }
