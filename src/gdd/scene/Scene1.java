@@ -44,6 +44,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
+import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -138,6 +139,11 @@ public class Scene1 extends JPanel {
 
     private boolean inGame = true;
     private String message = "Game Over";
+
+    // Game Over backdrop: the last frame of the run, blurred. Built on the
+    // first paint after death and cleared on restart.
+    private BufferedImage deathBlur = null;
+    private static final int BLUR_STEPS = 3; // bilinear halvings — 1/8 scale
 
     private final Dimension d = new Dimension(BOARD_WIDTH, BOARD_HEIGHT);
     // Each launch is a fresh, varied run. Flip FIXED_SEED to true (with the seed
@@ -556,7 +562,7 @@ public class Scene1 extends JPanel {
         blueBullets = new ArrayList<>();
         finalWindows = new RealityBreak();
         finalWindows.open(this);        // the four tears, now YOUR attack
-        message = "THE LOOP IS COMPLETE";
+        message = "YOU NEVER LEARN, DO YOU?";
         Sfx.bossWarn();
         shake(30, 12);
         System.out.println(">>> FINAL LOOP: you are Nemesis now — and you cannot win.");
@@ -692,7 +698,7 @@ public class Scene1 extends JPanel {
             finalWindows.close();
             finalWindows = null;
         }
-        message = "THE LOOP IS COMPLETE";
+        message = "YOU NEVER LEARN, DO YOU?";
     }
 
     private void drawFinalLoop(Graphics g) {
@@ -784,6 +790,7 @@ public class Scene1 extends JPanel {
         firing = false;
         fireTimer = 0;
         message = "Game Over";
+        deathBlur = null;
         inGame = true;
         nemesisDeathTimer = 0;
         flash = 0;
@@ -1100,20 +1107,7 @@ public class Scene1 extends JPanel {
             }
             g.translate(ox, oy);
 
-            backdrop.draw(g); // parallax backdrop, behind everything
-            drawExplosions(g);
-            drawPowreUps(g);
-            drawAliens(g);
-            drawEnemyBullets(g);
-            drawFinalLoop(g); // the blue past self + its shots
-            drawBeam(g);
-            drawPlayerRay(g); // the player's corrupted Ray, over the enemies
-            drawPlayer(g);
-            drawShot(g);
-            drawBoss(g);
-            if (finalLoop) {
-                drawFinalHealthBar(g);
-            }
+            drawWorld(g);
 
             g.translate(-ox, -oy);
 
@@ -1145,6 +1139,28 @@ public class Scene1 extends JPanel {
         }
 
         Toolkit.getDefaultToolkit().sync();
+    }
+
+    /**
+     * Everything that lives in the arena, back to front. Split out of
+     * {@link #doDrawing} so the Game Over screen can re-render the frozen
+     * scene into an offscreen image and blur it.
+     */
+    private void drawWorld(Graphics g) {
+        backdrop.draw(g); // parallax backdrop, behind everything
+        drawExplosions(g);
+        drawPowreUps(g);
+        drawAliens(g);
+        drawEnemyBullets(g);
+        drawFinalLoop(g); // the blue past self + its shots
+        drawBeam(g);
+        drawPlayerRay(g); // the player's corrupted Ray, over the enemies
+        drawPlayer(g);
+        drawShot(g);
+        drawBoss(g);
+        if (finalLoop) {
+            drawFinalHealthBar(g);
+        }
     }
 
     /** Dim veil + PAUSED, drawn over the frozen scene. */
@@ -1199,35 +1215,87 @@ public class Scene1 extends JPanel {
 
     private void gameOver(Graphics g) {
 
-        g.setColor(Color.black);
-        g.fillRect(0, 0, BOARD_WIDTH, BOARD_HEIGHT);
+        // The arena you just lost in, frozen and out of focus, instead of a
+        // black screen — built once, then reused for every repaint.
+        if (deathBlur == null) {
+            deathBlur = blurredSnapshot();
+        }
+        g.drawImage(deathBlur, 0, 0, this);
 
         int cy = BOARD_HEIGHT / 2;
 
         // Title
         var big = new Font("Helvetica", Font.BOLD, 40);
-        g.setFont(big);
-        g.setColor(Color.red);
-        drawCentered(g, message, cy - 120, big);
+        drawCentered(g, message, cy - 120, big, Color.red);
 
         // Score lines
         var scoreFont = new Font("Helvetica", Font.BOLD, 28);
-        g.setFont(scoreFont);
-        g.setColor(new Color(255, 220, 120));
-        drawCentered(g, "SCORE  " + String.format("%,d", score), cy - 70, scoreFont);
+        drawCentered(g, "SCORE  " + String.format("%,d", score), cy - 70, scoreFont,
+                new Color(255, 220, 120));
 
         var mid = new Font("Helvetica", Font.BOLD, 20);
-        g.setFont(mid);
-        g.setColor(Color.white);
-        drawCentered(g, "Kills: " + deaths + "    Grazes: " + grazes, cy - 30, mid);
-        drawCentered(g, "Time survived: " + (frame / 60) + "s", cy - 2, mid);
-        drawCentered(g, "Bosses beaten: " + bossesBeaten, cy + 26, mid);
+        drawCentered(g, "Kills: " + deaths + "    Grazes: " + grazes, cy - 30, mid, Color.white);
+        drawCentered(g, "Time survived: " + (frame / 60) + "s", cy - 2, mid, Color.white);
+        drawCentered(g, "Bosses beaten: " + bossesBeaten, cy + 26, mid, Color.white);
 
         // Prompt (timer is stopped here, so frame is frozen — keep it static).
         var small = new Font("Helvetica", Font.BOLD, 18);
-        g.setFont(small);
-        g.setColor(Color.yellow);
-        drawCentered(g, "Press SPACE to play again", cy + 70, small);
+        drawCentered(g, "Press SPACE to play again", cy + 70, small, Color.yellow);
+    }
+
+    /**
+     * The frozen scene, blurred and dimmed, as an image the size of the board.
+     * Blur is a downscale/upscale ladder — several bilinear halvings and the
+     * same number of doublings back up, which is cheap and smooth enough, and
+     * only ever runs once per death.
+     */
+    private BufferedImage blurredSnapshot() {
+        BufferedImage shot = new BufferedImage(BOARD_WIDTH, BOARD_HEIGHT,
+                BufferedImage.TYPE_INT_RGB);
+        Graphics2D fg = shot.createGraphics();
+        fg.setColor(Color.black);
+        fg.fillRect(0, 0, BOARD_WIDTH, BOARD_HEIGHT);
+        drawWorld(fg); // no shake offset — the picture should sit still
+        drawHud(fg);
+        fg.dispose();
+
+        BufferedImage img = shot;
+        for (int i = 0; i < BLUR_STEPS; i++) {
+            img = scaled(img, Math.max(1, img.getWidth() / 2), Math.max(1, img.getHeight() / 2));
+        }
+        for (int i = 0; i < BLUR_STEPS; i++) {
+            img = scaled(img, Math.min(BOARD_WIDTH, img.getWidth() * 2),
+                    Math.min(BOARD_HEIGHT, img.getHeight() * 2));
+        }
+        BufferedImage out = scaled(img, BOARD_WIDTH, BOARD_HEIGHT);
+
+        // A dark veil, so the white and yellow text stays readable over it.
+        Graphics2D og = out.createGraphics();
+        og.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.5f));
+        og.setColor(Color.black);
+        og.fillRect(0, 0, BOARD_WIDTH, BOARD_HEIGHT);
+        og.dispose();
+        return out;
+    }
+
+    private static BufferedImage scaled(BufferedImage src, int w, int h) {
+        BufferedImage dst = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g2 = dst.createGraphics();
+        g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+                RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        g2.drawImage(src, 0, 0, w, h, null);
+        g2.dispose();
+        return dst;
+    }
+
+    /** Centered text with a hard shadow, so it reads over the blurred arena. */
+    private void drawCentered(Graphics g, String text, int y, Font font, Color color) {
+        int x = (BOARD_WIDTH - getFontMetrics(font).stringWidth(text)) / 2;
+        g.setFont(font);
+        g.setColor(new Color(0, 0, 0, 190));
+        g.drawString(text, x + 2, y + 2);
+        g.setColor(color);
+        g.drawString(text, x, y);
     }
 
     private void drawCentered(Graphics g, String text, int y, Font font) {

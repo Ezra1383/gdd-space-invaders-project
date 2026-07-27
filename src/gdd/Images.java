@@ -44,6 +44,79 @@ public final class Images {
     }
 
     /**
+     * Loads an institutional logo and scales it to the given height, keeping
+     * its aspect ratio.
+     *
+     * <p>The two crests don't agree on what a background is: the university
+     * seal has a real alpha channel, while the faculty crest is opaque white.
+     * Both cases are normalised here — near-white, near-grey pixels are
+     * snapped to one flat white, and either kind of background is cropped
+     * away — so a logo can be dropped in without the caller caring which it
+     * is. The background is flattened rather than keyed out because these
+     * crests are drawn partly in black ink: made transparent, the lettering
+     * would vanish into the black title screen. They sit on a light plate.
+     */
+    public static BufferedImage logo(String path, int height) {
+        BufferedImage src = load(path);
+        int w = src.getWidth();
+        int h = src.getHeight();
+        BufferedImage flat = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int argb = src.getRGB(x, y);
+                int r = (argb >> 16) & 255;
+                int g = (argb >> 8) & 255;
+                int b = argb & 255;
+                int max = Math.max(r, Math.max(g, b));
+                int min = Math.min(r, Math.min(g, b));
+                if (min >= 225 && max - min <= 24) { // light and near-grey
+                    argb = (argb & 0xFF000000) | 0xFFFFFF;
+                }
+                flat.setRGB(x, y, argb);
+            }
+        }
+        flat = trimBackground(flat);
+        w = flat.getWidth();
+        h = flat.getHeight();
+        return scale(flat, Math.max(1, w * height / h), height);
+    }
+
+    /**
+     * Crops the empty border off a logo — white or transparent, since the
+     * crests differ. Both are mostly margin, which would otherwise scale down
+     * to a plate with a tiny crest floating in the middle of it.
+     */
+    private static BufferedImage trimBackground(BufferedImage src) {
+        int w = src.getWidth();
+        int h = src.getHeight();
+        int top = h, left = w, right = -1, bottom = -1;
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int argb = src.getRGB(x, y);
+                if ((argb >>> 24) < 8 || (argb & 0xFFFFFF) == 0xFFFFFF) {
+                    continue; // transparent or white — background either way
+                }
+                if (x < left) {
+                    left = x;
+                }
+                if (x > right) {
+                    right = x;
+                }
+                if (y < top) {
+                    top = y;
+                }
+                if (y > bottom) {
+                    bottom = y;
+                }
+            }
+        }
+        if (right < left || bottom < top) {
+            return src; // nothing but background — leave it alone
+        }
+        return src.getSubimage(left, top, right - left + 1, bottom - top + 1);
+    }
+
+    /**
      * Loads an image, multiplies its RGB channels by the given tint (alpha
      * preserved), and scales it by a floating factor. Used to spin enemy-type
      * variants off a single base sprite (e.g. alien.png recoloured per type).

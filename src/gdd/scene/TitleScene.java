@@ -2,8 +2,8 @@ package gdd.scene;
 
 import gdd.AudioPlayer;
 import gdd.Game;
-import gdd.Images;
 import static gdd.Global.*;
+import gdd.Images;
 import java.awt.AlphaComposite;
 import java.awt.Color;
 import java.awt.Composite;
@@ -22,12 +22,21 @@ import javax.swing.Timer;
 
 public class TitleScene extends JPanel {
 
+    private static final int LOGO_HEIGHT = 92;
+    private static final int LOGO_MARGIN = 16;
+
     private int frame = 0;
     private Image image;
+    private Image logoUniversity;
+    private Image logoFaculty;
     private AudioPlayer audioPlayer;
     private final Dimension d = new Dimension(BOARD_WIDTH, BOARD_HEIGHT);
     private Timer timer;
     private Game game;
+    // The title can be shown more than once now (About goes back to it), so
+    // start() has to be safe to call again: one key listener, one timer, one
+    // music clip — never a fresh stack of them per visit.
+    private boolean wired = false;
 
     public TitleScene(Game game) {
         this.game = game;
@@ -40,16 +49,30 @@ public class TitleScene extends JPanel {
     }
 
     public void start() {
-        addKeyListener(new TAdapter());
+        if (!wired) {
+            addKeyListener(new TAdapter());
+            wired = true;
+        }
         setFocusable(true);
         requestFocusInWindow();
         setBackground(Color.black);
 
-        timer = new Timer(1000 / 60, new GameCycle());
+        if (timer == null) {
+            timer = new Timer(1000 / 60, new GameCycle());
+        }
         timer.start();
 
         initTitle();
-        initAudio();
+        if (audioPlayer == null) {
+            initAudio();
+        }
+    }
+
+    /** Leave the title on screen's terms — freeze it, but keep the music. */
+    public void pause() {
+        if (timer != null) {
+            timer.stop();
+        }
     }
 
     public void stop() {
@@ -60,6 +83,7 @@ public class TitleScene extends JPanel {
 
             if (audioPlayer != null) {
                 audioPlayer.stop();
+                audioPlayer = null; // stop() closes the clip; it can't be reused
             }
         } catch (Exception e) {
             System.err.println("Error closing audio player.");
@@ -68,6 +92,30 @@ public class TitleScene extends JPanel {
 
     private void initTitle() {
         image = Images.load(IMG_TITLE);
+        logoUniversity = Images.logo(IMG_LOGO_UNIVERSITY, LOGO_HEIGHT);
+        logoFaculty = Images.logo(IMG_LOGO_FACULTY, LOGO_HEIGHT);
+    }
+
+    /**
+     * The university and faculty crests, in the two free top corners. Both are
+     * flat-backed artwork with black lettering, so each sits on a light plate —
+     * dropped straight onto the black screen their text would disappear.
+     */
+    private void drawLogos(Graphics g) {
+        drawLogo(g, logoUniversity, LOGO_MARGIN);
+        drawLogo(g, logoFaculty, d.width - LOGO_MARGIN - logoFaculty.getWidth(this));
+    }
+
+    private void drawLogo(Graphics g, Image logo, int x) {
+        Graphics2D g2 = (Graphics2D) g;
+        int w = logo.getWidth(this);
+        int h = logo.getHeight(this);
+        int pad = 7;
+        g2.setColor(Color.white);
+        g2.fillRoundRect(x - pad, LOGO_MARGIN - pad, w + pad * 2, h + pad * 2, 12, 12);
+        g2.setColor(new Color(90, 140, 200));
+        g2.drawRoundRect(x - pad, LOGO_MARGIN - pad, w + pad * 2, h + pad * 2, 12, 12);
+        g2.drawImage(logo, x, LOGO_MARGIN, this);
     }
 
     private void initAudio() {
@@ -96,6 +144,7 @@ public class TitleScene extends JPanel {
 
         g.drawImage(image, 0, -80, d.width, d.height, this);
 
+        drawLogos(g);
         drawHowTo(g);
 
         if (frame % 60 < 30) {
@@ -112,9 +161,14 @@ public class TitleScene extends JPanel {
         // int y = (d.height + stringHeight) / 2;
         g.drawString(text, x, 600);
 
+        g.setColor(new Color(170, 180, 195));
+        g.setFont(new Font("Helvetica", Font.BOLD, 16));
+        String about = "Press A for About";
+        g.drawString(about, (d.width - g.getFontMetrics().stringWidth(about)) / 2, 630);
+
         g.setColor(Color.gray);
         g.setFont(g.getFont().deriveFont(10f));
-        g.drawString("Game by Chayapol", 10, 650);
+        g.drawString("Game by Mohammad Rahemi", 10, 650);
 
         Toolkit.getDefaultToolkit().sync();
     }
@@ -184,6 +238,8 @@ public class TitleScene extends JPanel {
         public void keyPressed(KeyEvent e) {
             if (e.getKeyCode() == KeyEvent.VK_SPACE) {
                 game.loadScene2(); // start the game
+            } else if (e.getKeyCode() == KeyEvent.VK_A) {
+                game.loadAbout(); // credits: university, faculty, team
             }
         }
     }

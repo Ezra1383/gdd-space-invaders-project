@@ -1,5 +1,6 @@
 package gdd;
 
+import gdd.scene.AboutScene;
 import gdd.scene.Scene1;
 import gdd.scene.TitleScene;
 import javax.swing.JFrame;
@@ -7,6 +8,7 @@ import javax.swing.JFrame;
 public class Game extends JFrame  {
 
     TitleScene titleScene;
+    AboutScene aboutScene;
     Scene1 scene1;
 
     public Game() {
@@ -21,6 +23,7 @@ public class Game extends JFrame  {
         preload.start();
 
         titleScene = new TitleScene(this);
+        aboutScene = new AboutScene(this);
         scene1 = new Scene1(this);
         initUI();
         loadTitle();
@@ -41,7 +44,18 @@ public class Game extends JFrame  {
         getContentPane().removeAll();
         // add(new Title(this));
         add(titleScene);
+        aboutScene.stop();
         titleScene.start();
+        revalidate();
+        repaint();
+    }
+
+    /** The credits screen, reached with A from the title. */
+    public void loadAbout() {
+        getContentPane().removeAll();
+        add(aboutScene);
+        titleScene.pause(); // the title music carries on under the credits
+        aboutScene.start();
         revalidate();
         repaint();
     }

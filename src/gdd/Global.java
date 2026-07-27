@@ -35,6 +35,10 @@ public class Global {
     public static final String IMG_BOMB = "src/images/bomb.png";
     public static final String IMG_EXPLOSION = "src/images/explosion.png";
     public static final String IMG_TITLE = "src/images/title.png";
+    // Institutional crests, shown in the title screen's top corners.
+    public static final String IMG_LOGO_UNIVERSITY =
+            "src/images/Logos/Assumption_University_of_Thailand_(logo).png";
+    public static final String IMG_LOGO_FACULTY = "src/images/Logos/VMES-Logo-BG-White.png";
     public static final String IMG_POWERUP_SPEEDUP = "src/images/powerup-s.png";
     public static final String IMG_SPRITES = "src/images/spites.png"; // sprite sheet
     // Offense pickup spin strips (15 frames of 32x32): the player's weapon
