@@ -1,0 +1,1009 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Reversal - a Java bullet-hell shooter about beating the final boss and then becoming it.">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; }
+  img, canvas { max-width: 100%; }
+</style>
+<title>REVERSAL — a bullet hell about becoming the boss</title>
+
+<style>
+  /* ---------- tokens ---------------------------------------------------- */
+  :root {
+    /* the arena is a screen: it stays void-black in every theme */
+    --void: #05060b;
+
+    --ground: #08090f;
+    --surface: #0d1017;
+    --ink: #e4eaf6;
+    --ink-soft: #929fbc;
+    --line: rgba(146, 159, 188, 0.18);
+
+    --hull: #6fa8ff;
+    --nemesis: #e8384f;
+    --ember: #ffc46b;
+
+    /* the corruption arc: hue + saturation are driven by scroll, lightness
+       belongs to the theme so the accent stays legible on either ground */
+    --accent-h: 216;
+    --accent-s: 100%;
+    --accent-l: 72%;
+    --accent: hsl(var(--accent-h) var(--accent-s) var(--accent-l));
+
+    --measure: 34rem;
+    --pad: clamp(1.25rem, 5vw, 3rem);
+
+    --display: "Helvetica Neue", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --body: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root {
+      --ground: #e8ecf3;
+      --surface: #f4f6fa;
+      --ink: #0b0f17;
+      --ink-soft: #4d576b;
+      --line: rgba(11, 15, 23, 0.14);
+      --hull: #2a5fc4;
+      --nemesis: #c01f33;
+      --accent-l: 46%;
+    }
+  }
+
+  :root[data-theme="light"] {
+    --ground: #e8ecf3;
+    --surface: #f4f6fa;
+    --ink: #0b0f17;
+    --ink-soft: #4d576b;
+    --line: rgba(11, 15, 23, 0.14);
+    --hull: #2a5fc4;
+    --nemesis: #c01f33;
+    --accent-l: 46%;
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #08090f;
+    --surface: #0d1017;
+    --ink: #e4eaf6;
+    --ink-soft: #929fbc;
+    --line: rgba(146, 159, 188, 0.18);
+    --hull: #6fa8ff;
+    --nemesis: #e8384f;
+    --accent-l: 72%;
+  }
+
+  /* ---------- base ------------------------------------------------------ */
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 1.0625rem;
+    line-height: 1.72;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  ::selection { background: var(--accent); color: var(--void); }
+
+  a { color: inherit; text-decoration-color: var(--accent); text-underline-offset: 0.2em; }
+  a:hover { text-decoration-thickness: 2px; }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  /* ---------- hero ------------------------------------------------------ */
+  .hero {
+    position: relative;
+    background: var(--void);
+    border-bottom: 1px solid var(--line);
+    min-height: min(94svh, 900px);
+    display: grid;
+    grid-template-rows: 1fr auto;
+    isolation: isolate;
+  }
+
+  #arena {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    z-index: 0;
+    cursor: crosshair;
+    touch-action: pan-y;
+  }
+
+  .hero__mask {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background:
+      radial-gradient(120% 85% at 22% 55%, rgba(5, 6, 11, 0.9) 0%, rgba(5, 6, 11, 0.55) 42%, rgba(5, 6, 11, 0) 72%),
+      linear-gradient(to top, var(--void) 2%, rgba(5, 6, 11, 0) 30%);
+  }
+
+  .hero__inner {
+    position: relative;
+    z-index: 2;
+    padding: clamp(3rem, 9vh, 6rem) var(--pad) clamp(2rem, 5vh, 3.5rem);
+    align-self: end;
+    pointer-events: none;
+    max-width: 62rem;
+  }
+
+  .hero__inner a,
+  .hero__inner button { pointer-events: auto; }
+
+  .wordmark {
+    font-family: var(--display);
+    font-weight: 800;
+    font-size: clamp(3.2rem, 13vw, 9.5rem);
+    line-height: 0.82;
+    letter-spacing: -0.055em;
+    text-transform: uppercase;
+    color: #eef3ff;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .wordmark .flip {
+    display: inline-block;
+    transform: scaleX(-1);
+    color: var(--nemesis);
+  }
+
+  .hero__thesis {
+    color: #cbd6ec;
+    font-size: clamp(1.05rem, 2.2vw, 1.45rem);
+    line-height: 1.5;
+    max-width: 30ch;
+    margin: 1.4rem 0 0;
+    text-wrap: balance;
+  }
+
+  .hero__thesis b { color: #fff; font-weight: 600; }
+
+  .hero__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.4rem;
+    margin: 1.9rem 0 0;
+    padding: 0;
+    list-style: none;
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #7d8bab;
+  }
+
+  /* live HUD, drawn in the game's own vernacular */
+  .hud {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 2;
+    padding: 0.9rem 1.1rem;
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    line-height: 1.85;
+    letter-spacing: 0.06em;
+    color: #97a5c4;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+  }
+
+  .hud b { color: #dce6fb; font-weight: 400; }
+
+  .hint {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    z-index: 2;
+    padding: 0.9rem 1.1rem;
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #5c6885;
+    pointer-events: none;
+  }
+
+  /* ---------- chapters -------------------------------------------------- */
+  .chapter {
+    padding: clamp(4rem, 11vh, 7.5rem) var(--pad);
+    max-width: calc(var(--measure) + 2 * 3rem);
+    margin-inline: auto;
+  }
+
+  .chapter > * { max-width: var(--measure); }
+
+  .chapter h2 {
+    font-family: var(--display);
+    font-weight: 800;
+    font-size: clamp(1.9rem, 5vw, 3rem);
+    line-height: 1.02;
+    letter-spacing: -0.035em;
+    text-transform: uppercase;
+    margin: 0.7rem 0 1.4rem;
+    text-wrap: balance;
+  }
+
+  .chapter p { margin: 0 0 1.15rem; }
+
+  .lede {
+    font-size: 1.2rem;
+    line-height: 1.6;
+    color: var(--ink);
+  }
+
+  .chapter p, .chapter li { color: var(--ink-soft); }
+  .lede, .chapter strong { color: var(--ink); }
+  .chapter strong { font-weight: 600; }
+
+  /* the boss rays: full-bleed lethal bands, the way the arena gets cut up */
+  .ray {
+    border: 0;
+    height: 1px;
+    margin: 0;
+    width: 100vw;
+    margin-left: calc(50% - 50vw);
+    background: linear-gradient(to right,
+      transparent 0%,
+      color-mix(in srgb, var(--accent) 55%, transparent) 18%,
+      var(--accent) 50%,
+      color-mix(in srgb, var(--accent) 55%, transparent) 82%,
+      transparent 100%);
+    box-shadow: 0 0 26px 1px color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+
+  /* ---------- the beats list ------------------------------------------- */
+  .beats {
+    list-style: none;
+    padding: 0;
+    margin: 2.25rem 0 0;
+    display: grid;
+    gap: 1.9rem;
+  }
+
+  .beats li {
+    display: grid;
+    gap: 0.35rem;
+    padding-left: 1.15rem;
+    border-left: 1px solid var(--line);
+  }
+
+  .beats h3 {
+    font-family: var(--display);
+    font-size: 1.0625rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    margin: 0;
+    color: var(--ink);
+  }
+
+  .beats p { margin: 0; }
+
+  /* ---------- the turn: the page takes the boss's side of the arena ----- */
+  .turn {
+    text-align: right;
+    max-width: calc(var(--measure) + 2 * 3rem);
+  }
+
+  .turn > * { margin-left: auto; }
+
+  .turn .beats li {
+    border-left: 0;
+    border-right: 1px solid var(--line);
+    padding-left: 0;
+    padding-right: 1.15rem;
+  }
+
+  .quote {
+    font-family: var(--display);
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+    font-size: clamp(1.4rem, 4.2vw, 2.3rem);
+    color: var(--nemesis);
+    margin: 2.5rem 0 0;
+    max-width: 100%;
+  }
+
+  .quote span {
+    display: block;
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    font-weight: 400;
+    letter-spacing: 0.18em;
+    color: var(--ink-soft);
+    margin-top: 0.8rem;
+  }
+
+  /* ---------- data ------------------------------------------------------ */
+  .scroller { overflow-x: auto; margin: 2rem 0 0; max-width: var(--measure); }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 30rem;
+    font-size: 0.95rem;
+    text-align: left;
+  }
+
+  th, td {
+    padding: 0.85rem 1rem 0.85rem 0;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+
+  thead th {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    font-weight: 400;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    padding-bottom: 0.6rem;
+  }
+
+  tbody th {
+    font-family: var(--display);
+    font-weight: 700;
+    color: var(--ink);
+    white-space: nowrap;
+    padding-right: 1.75rem;
+  }
+
+  td { color: var(--ink-soft); }
+
+  .keycaps {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.7rem 1.5rem;
+    margin: 2rem 0 0;
+    align-items: baseline;
+  }
+
+  kbd {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.06em;
+    padding: 0.28rem 0.6rem;
+    border: 1px solid var(--line);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    background: var(--surface);
+    color: var(--ink);
+    white-space: nowrap;
+  }
+
+  .keycaps span { color: var(--ink-soft); font-size: 0.95rem; }
+
+  pre {
+    margin: 1rem 0 0;
+    padding: 1.05rem 1.15rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 2px solid var(--accent);
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    line-height: 1.75;
+    color: var(--ink);
+  }
+
+  pre .c { color: var(--ink-soft); }
+
+  .runlabel {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    margin: 2rem 0 0;
+  }
+
+  /* ---------- footer ---------------------------------------------------- */
+  footer {
+    border-top: 1px solid var(--line);
+    padding: clamp(2.5rem, 7vh, 4rem) var(--pad);
+    max-width: calc(var(--measure) + 2 * 3rem);
+    margin-inline: auto;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    line-height: 2;
+    letter-spacing: 0.04em;
+    color: var(--ink-soft);
+  }
+
+  footer b { color: var(--ink); font-weight: 400; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+
+<header class="hero">
+  <canvas id="arena" tabindex="0" aria-label="A playable slice of Reversal: fly the marked ship and skim enemy fire."></canvas>
+  <div class="hero__mask"></div>
+
+  <div class="hud" aria-hidden="true">
+    SCORE: <b id="hud-score">0</b><br>
+    GRAZE: <b id="hud-graze">0</b>   KILLS: <b id="hud-kills">0</b><br>
+    WEAPON: <b>Lv 3</b>
+  </div>
+  <p class="hint" aria-hidden="true">Move — pointer or arrow keys</p>
+
+  <div></div>
+  <div class="hero__inner">
+    <h1 class="wordmark">Rev<span class="flip">e</span>rsal</h1>
+    <p class="hero__thesis">
+      You <b>will</b> beat the final boss. That isn't the twist. The twist is
+      what you do with the body.
+    </p>
+    <ul class="hero__meta">
+      <li>Bullet hell</li>
+      <li>Java · Swing</li>
+      <li>Endless run</li>
+      <li>One sitting</li>
+    </ul>
+  </div>
+</header>
+
+<main>
+  <section class="chapter">
+    <p class="eyebrow">The pitch</p>
+    <h2>A screen full of death, and a hitbox the size of a dot</h2>
+
+    <p class="lede">
+      Three fleets stand between you and the end of the war. You will burn
+      through all of them. Every shooter tells you to kill the boss — Reversal
+      lets you become it, then shows you exactly what that's worth.
+    </p>
+
+    <p>
+      Your ship is forty-eight pixels wide. The part of it that can actually be
+      killed is twelve. Bullets tear past the wings by a hair and you live, every
+      single time, because you <strong>chose</strong> to be there.
+    </p>
+
+    <ul class="beats">
+      <li>
+        <h3>Get paid for nerve</h3>
+        <p>
+          Skim a bullet without touching it and you graze it — points, instantly,
+          for the near miss. Playing it safe is playing it poor. The scoreboard
+          belongs to the pilot who flies <em>into</em> the pattern.
+        </p>
+      </li>
+      <li>
+        <h3>Two fleets, two ways to die</h3>
+        <p>
+          The Nairan carve the arena into lethal bands and dare you to pick a
+          lane. The Kla'ed wall it in permanently — every chunk of health you
+          take off their flagship slams another door, until you are duelling a
+          dreadnought inside a corridor you built yourself.
+        </p>
+      </li>
+      <li>
+        <h3>A run that never repeats</h3>
+        <p>
+          No fixed level list. A live director watches how you're doing, builds
+          each wave out of formations on a growing budget, and drops a boss gate
+          when the tension is right. Clear the authored run and it loops —
+          harder, every lap.
+        </p>
+      </li>
+      <li>
+        <h3>And then there's Nemesis</h3>
+        <p>
+          Your ship. Your guns. In red. It remembers every boss you have already
+          beaten and puts them back on the table one at a time as its health
+          falls — the Nairan rays, the Kla'ed walls, and finally vertical beams
+          as reality starts coming apart at the seams.
+        </p>
+      </li>
+    </ul>
+  </section>
+
+  <hr class="ray">
+
+  <section class="chapter turn">
+    <p class="eyebrow">The turn</p>
+    <h2>Kill Nemesis and the game hands you the wreckage</h2>
+
+    <p class="lede">
+      It does not end. Red corruption shards start dropping, and they are right
+      there, and it made you feel small, and it is <strong>power</strong>.
+    </p>
+
+    <ul class="beats">
+      <li>
+        <h3>Each shard takes something</h3>
+        <p>
+          Your hull stains one shade further from blue toward Nemesis red, and
+          the Ray widens — the flagship's signature beam, now yours, firing
+          forward through everything in its lane.
+        </p>
+      </li>
+      <li>
+        <h3>Five shards and there is nothing left to save</h3>
+        <p>
+          The screen tears open. You take the boss's side of the arena — the
+          right — and you turn to face the left, where a small blue ship has just
+          flown in. It's you. The version that started this run.
+        </p>
+      </li>
+      <li>
+        <h3>It is invincible</h3>
+        <p>
+          It grinds your health bar down while you throw everything Nemesis ever
+          had at it. You are the boss now. Somebody else is coming for you. The
+          loop closes.
+        </p>
+      </li>
+    </ul>
+
+    <p class="quote">
+      “You never learn, do you?”
+      <span>— the last line of the run</span>
+    </p>
+  </section>
+
+  <hr class="ray">
+
+  <section class="chapter">
+    <p class="eyebrow">Loadout</p>
+    <h2>Build the pilot you want</h2>
+    <p>
+      Kills drop upgrades. Nothing here makes you faster — this game is about
+      precision, and you will want every pixel of control you have.
+    </p>
+
+    <div class="scroller">
+      <table>
+        <thead>
+          <tr><th scope="col">Drop</th><th scope="col">What it does</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">Weapon Up</th>
+            <td>Five tiers, from a single pellet to a plasma comet that deletes what it touches. Higher tiers cost more to reach, so firepower ramps across the whole run instead of maxing out in the first biome.</td>
+          </tr>
+          <tr>
+            <th scope="row">Clone</th>
+            <td>A ghost ship flies your wing. It shoots. It also eats one lethal hit for you. Up to two.</td>
+          </tr>
+          <tr>
+            <th scope="row">Shield</th>
+            <td>A charge that breaks instead of you — but only after your clones are gone. Up to three.</td>
+          </tr>
+          <tr>
+            <th scope="row">Corruption</th>
+            <td>Unlocked only after Nemesis falls. There is no way to put it back.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="chapter">
+    <p class="eyebrow">Play it</p>
+    <h2>Six keys, no install</h2>
+
+    <div class="keycaps">
+      <kbd>Arrows</kbd><span>Move — full 2D, you own the left third of the arena</span>
+      <kbd>Space</kbd><span>Fire, held down</span>
+      <kbd>P</kbd><span>Pause</span>
+      <kbd>M</kbd><span>Mute</span>
+      <kbd>A</kbd><span>Credits, from the title screen</span>
+    </div>
+
+    <p class="runlabel">Requires Java 17+ · run from the project root</p>
+<pre><span class="c"># Windows (PowerShell)</span>
+javac -encoding UTF-8 -d out (Get-ChildItem -Recurse src -Filter *.java | % { $_.FullName })
+java -cp out gdd.Main
+
+<span class="c"># macOS / Linux</span>
+find src -name "*.java" &gt; sources.txt &amp;&amp; javac -encoding UTF-8 -d out @sources.txt
+java -cp out gdd.Main</pre>
+
+    <p style="margin-top:1.5rem">
+      Pure Java and Swing — no engine, no libraries. A sixty-frame update loop, a
+      data-driven enemy roster, a runtime wave director, and sound effects
+      synthesised in code.
+    </p>
+  </section>
+</main>
+
+<footer>
+  <b>Reversal</b> — a Game Design &amp; Development project at Assumption University of Thailand.<br>
+  Mohammad Rahemi · 6611695<br>
+  Mankirat Kaur · 6611585<br>
+  <br>
+  Descended from Jan Bodnar's Java Space Invaders, which is where the first
+  pellet came from and very little else survives.
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---------- the corruption arc: scroll drives the accent hue ---------- */
+  var root = document.documentElement;
+  var arcTicking = false;
+
+  function arc() {
+    arcTicking = false;
+    var max = document.body.scrollHeight - window.innerHeight;
+    var t = max > 0 ? Math.min(1, Math.max(0, window.scrollY / max)) : 0;
+    // 216deg (hull blue) through violet to 353deg (Nemesis red)
+    root.style.setProperty("--accent-h", (216 + t * 137).toFixed(1));
+    root.style.setProperty("--accent-s", (100 - t * 20).toFixed(0) + "%");
+  }
+
+  window.addEventListener("scroll", function () {
+    if (!arcTicking) { arcTicking = true; requestAnimationFrame(arc); }
+  }, { passive: true });
+  window.addEventListener("resize", arc);
+  arc();
+
+  /* ---------- the arena ------------------------------------------------- */
+  var cv = document.getElementById("arena");
+  var ctx = cv.getContext("2d");
+  var elScore = document.getElementById("hud-score");
+  var elGraze = document.getElementById("hud-graze");
+  var elKills = document.getElementById("hud-kills");
+
+  var W = 0, H = 0, DPR = Math.min(window.devicePixelRatio || 1, 2);
+  var stars = [], foes = [], bolts = [], shots = [], sparks = [];
+  var score = 0, grazes = 0, kills = 0, tick = 0, flash = 0;
+  var piloted = false, spawnAt = 40;
+  var keys = Object.create(null);
+
+  var me = { x: 0, y: 0, vx: 0, vy: 0, tx: 0, ty: 0 };
+
+  var C = {
+    bolt: "#ff5c7a",
+    slug: "#ffd9e2",
+    shot: "#7fe3ff",
+    hull: "#8fc0ff",
+    core: "#ffffff",
+    foe: "#2b3c60",
+    foeLit: "#5678b0",
+    burn: "#ff9e4d"
+  };
+
+  function resize() {
+    var r = cv.getBoundingClientRect();
+    W = Math.max(1, r.width);
+    H = Math.max(1, r.height);
+    cv.width = Math.round(W * DPR);
+    cv.height = Math.round(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    stars.length = 0;
+    for (var i = 0; i < Math.round(W * H / 5200); i++) {
+      stars.push({
+        x: Math.random() * W,
+        y: Math.random() * H,
+        z: 0.35 + Math.random() * 1.15
+      });
+    }
+    me.x = Math.min(me.x || W * 0.16, W * 0.38);
+    me.y = me.y || H / 2;
+    me.tx = me.x; me.ty = me.y;
+  }
+
+  /* --- input: pointer anywhere over the arena, arrows when focused ------ */
+  cv.addEventListener("pointermove", function (e) {
+    var r = cv.getBoundingClientRect();
+    piloted = true;
+    me.tx = e.clientX - r.left;
+    me.ty = e.clientY - r.top;
+  }, { passive: true });
+
+  cv.addEventListener("pointerleave", function () { piloted = false; });
+
+  cv.addEventListener("keydown", function (e) {
+    if (e.key.indexOf("Arrow") !== 0) return;
+    e.preventDefault();
+    piloted = true;
+    keys[e.key] = true;
+  });
+  cv.addEventListener("keyup", function (e) { keys[e.key] = false; });
+
+  /* --- enemies ---------------------------------------------------------- */
+  var PATTERNS = ["aimed", "fan", "ring"];
+
+  function spawn() {
+    var kind = PATTERNS[(Math.random() * PATTERNS.length) | 0];
+    var big = kind === "ring";
+    foes.push({
+      x: W + 40,
+      y: 60 + Math.random() * Math.max(40, H - 170),
+      hold: W * (0.58 + Math.random() * 0.3),
+      bob: Math.random() * 6.28,
+      hp: big ? 9 : 4,
+      r: big ? 15 : 11,
+      kind: kind,
+      cd: 40 + ((Math.random() * 40) | 0),
+      hit: 0
+    });
+  }
+
+  function fire(f) {
+    var dx = me.x - f.x, dy = me.y - f.y;
+    var a = Math.atan2(dy, dx);
+    var sp = 2.6;
+    var i, n;
+    if (f.kind === "aimed") {
+      bolts.push(mkBolt(f.x, f.y, a, sp + 1));
+    } else if (f.kind === "fan") {
+      for (i = -1; i <= 1; i++) bolts.push(mkBolt(f.x, f.y, a + i * 0.22, sp));
+    } else {
+      n = 12;
+      for (i = 0; i < n; i++) bolts.push(mkBolt(f.x, f.y, a + i * 6.283 / n, sp - 0.5));
+    }
+  }
+
+  function mkBolt(x, y, a, sp) {
+    return { x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, a: a, g: false };
+  }
+
+  function burst(x, y, n, col) {
+    for (var i = 0; i < n; i++) {
+      var a = Math.random() * 6.283, s = 0.6 + Math.random() * 2.4;
+      sparks.push({ x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 18 + Math.random() * 20, col: col });
+    }
+  }
+
+  /* --- simulation ------------------------------------------------------- */
+  function step() {
+    tick++;
+
+    // pilot
+    if (!piloted) {
+      me.tx = W * (0.13 + 0.05 * Math.sin(tick / 190));
+      me.ty = H / 2 + Math.sin(tick / 47) * H * 0.3 + Math.sin(tick / 17) * 22;
+    }
+    if (keys.ArrowUp) me.ty -= 7;
+    if (keys.ArrowDown) me.ty += 7;
+    if (keys.ArrowLeft) me.tx -= 7;
+    if (keys.ArrowRight) me.tx += 7;
+
+    me.tx = Math.max(18, Math.min(W * 0.4, me.tx));
+    me.ty = Math.max(24, Math.min(H - 24, me.ty));
+    me.x += (me.tx - me.x) * 0.14;
+    me.y += (me.ty - me.y) * 0.14;
+
+    // guns: twin orbs, the game's tier-3 weapon
+    if (tick % 9 === 0) {
+      shots.push({ x: me.x + 16, y: me.y - 7 });
+      shots.push({ x: me.x + 16, y: me.y + 7 });
+    }
+
+    // stars
+    for (var i = 0; i < stars.length; i++) {
+      var s = stars[i];
+      s.x -= s.z * 0.75;
+      if (s.x < -2) { s.x = W + 2; s.y = Math.random() * H; }
+    }
+
+    // spawning
+    if (--spawnAt <= 0 && foes.length < 6) {
+      spawn();
+      spawnAt = 70 + ((Math.random() * 70) | 0);
+    }
+
+    // enemies
+    for (i = foes.length - 1; i >= 0; i--) {
+      var f = foes[i];
+      if (f.x > f.hold) f.x -= 3.4;
+      else { f.bob += 0.03; f.y += Math.sin(f.bob) * 0.7; }
+      if (f.hit > 0) f.hit--;
+      if (f.x < W + 20 && --f.cd <= 0) {
+        fire(f);
+        f.cd = f.kind === "ring" ? 130 : 62 + ((Math.random() * 40) | 0);
+      }
+      if (f.y < 30) f.y = 30;
+      if (f.y > H - 30) f.y = H - 30;
+    }
+
+    // player shots
+    for (i = shots.length - 1; i >= 0; i--) {
+      var sh = shots[i];
+      sh.x += 11;
+      if (sh.x > W + 10) { shots.splice(i, 1); continue; }
+      for (var j = foes.length - 1; j >= 0; j--) {
+        var g = foes[j];
+        if (Math.abs(sh.x - g.x) < g.r && Math.abs(sh.y - g.y) < g.r) {
+          shots.splice(i, 1);
+          g.hp--; g.hit = 4;
+          burst(sh.x, sh.y, 3, C.shot);
+          if (g.hp <= 0) {
+            burst(g.x, g.y, 22, C.burn);
+            foes.splice(j, 1);
+            kills++; score += 1500;
+          }
+          break;
+        }
+      }
+    }
+
+    // enemy fire, grazing, hits
+    for (i = bolts.length - 1; i >= 0; i--) {
+      var b = bolts[i];
+      b.x += b.vx; b.y += b.vy;
+      if (b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20) { bolts.splice(i, 1); continue; }
+      var dx = b.x - me.x, dy = b.y - me.y, d2 = dx * dx + dy * dy;
+      if (d2 < 49) {                    // the 12px kill dot
+        bolts.splice(i, 1);
+        flash = 10;
+        burst(me.x, me.y, 12, C.hull);
+        continue;
+      }
+      if (!b.g && d2 < 676) {           // the 26px graze band
+        b.g = true;
+        grazes++; score += 100;
+        burst(b.x, b.y, 2, C.slug);
+      }
+    }
+
+    // sparks
+    for (i = sparks.length - 1; i >= 0; i--) {
+      var p = sparks[i];
+      p.x += p.vx; p.y += p.vy; p.vx *= 0.94; p.vy *= 0.94;
+      if (--p.life <= 0) sparks.splice(i, 1);
+    }
+
+    if (flash > 0) flash--;
+  }
+
+  /* --- rendering: everything snapped to a 2px grid, pixel-art style ----- */
+  function px(v) { return Math.round(v / 2) * 2; }
+
+  function draw() {
+    ctx.fillStyle = "#05060b";
+    ctx.fillRect(0, 0, W, H);
+
+    for (var i = 0; i < stars.length; i++) {
+      var s = stars[i];
+      ctx.fillStyle = "rgba(255,255,255," + (0.13 + s.z * 0.3).toFixed(2) + ")";
+      ctx.fillRect(px(s.x), px(s.y), 2, 2);
+    }
+
+    for (i = 0; i < sparks.length; i++) {
+      var p = sparks[i];
+      ctx.globalAlpha = Math.max(0, Math.min(1, p.life / 26));
+      ctx.fillStyle = p.col;
+      ctx.fillRect(px(p.x), px(p.y), 2, 2);
+    }
+    ctx.globalAlpha = 1;
+
+    for (i = 0; i < foes.length; i++) drawFoe(foes[i]);
+
+    ctx.fillStyle = C.shot;
+    for (i = 0; i < shots.length; i++) {
+      ctx.fillRect(px(shots[i].x), px(shots[i].y) - 2, 10, 4);
+    }
+
+    for (i = 0; i < bolts.length; i++) {
+      var b = bolts[i];
+      ctx.save();
+      ctx.translate(px(b.x), px(b.y));
+      ctx.rotate(b.a);
+      ctx.fillStyle = C.bolt;
+      ctx.fillRect(-6, -2, 12, 4);
+      ctx.fillStyle = C.slug;
+      ctx.fillRect(-2, -2, 4, 4);
+      ctx.restore();
+    }
+
+    drawMe();
+  }
+
+  function drawFoe(f) {
+    var x = px(f.x), y = px(f.y), r = f.r;
+    ctx.fillStyle = C.burn;
+    ctx.fillRect(x + r - 2, y - 2, 6, 4);
+    ctx.fillStyle = f.hit > 0 ? "#ffffff" : C.foe;
+    ctx.fillRect(x - r, y - r + 4, r * 2, r * 2 - 8);
+    ctx.fillRect(x - r + 4, y - r, r * 2 - 12, r * 2);
+    ctx.fillStyle = f.hit > 0 ? "#ffffff" : C.foeLit;
+    ctx.fillRect(x - r + 2, y - 2, r + 2, 4);
+    ctx.fillRect(x - r - 4, y - 4, 6, 8);
+  }
+
+  function drawMe() {
+    var x = px(me.x), y = px(me.y);
+
+    // the graze band — the reason the whole game works
+    ctx.strokeStyle = "rgba(143,192,255,0.22)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(x, y, 26, 0, 6.283);
+    ctx.stroke();
+
+    ctx.fillStyle = C.burn;
+    ctx.fillRect(x - 20, y - 2, 6, 4);
+    ctx.fillStyle = flash > 0 ? "#ffffff" : C.hull;
+    ctx.fillRect(x - 14, y - 6, 22, 12);
+    ctx.fillRect(x - 6, y - 12, 10, 24);
+    ctx.fillRect(x + 8, y - 2, 10, 4);
+
+    // the 12px hitbox: the only part of you that can die
+    ctx.fillStyle = C.core;
+    ctx.fillRect(x - 3, y - 3, 6, 6);
+  }
+
+  var hudAt = 0;
+  function hud() {
+    if (tick - hudAt < 6) return;
+    hudAt = tick;
+    elScore.textContent = score.toLocaleString("en-US");
+    elGraze.textContent = grazes;
+    elKills.textContent = kills;
+  }
+
+  /* --- loop, paused whenever the arena is off screen -------------------- */
+  var running = false, raf = 0;
+
+  function frame() {
+    step();
+    draw();
+    hud();
+    raf = requestAnimationFrame(frame);
+  }
+
+  function setRunning(on) {
+    if (on === running) return;
+    running = on;
+    if (on) raf = requestAnimationFrame(frame);
+    else cancelAnimationFrame(raf);
+  }
+
+  window.addEventListener("resize", resize);
+  resize();
+
+  if (reduced) {
+    for (var w = 0; w < 260; w++) step();
+    draw();
+    hud();
+  } else {
+    if ("IntersectionObserver" in window) {
+      new IntersectionObserver(function (es) {
+        setRunning(es[0].isIntersecting);
+      }, { threshold: 0 }).observe(cv);
+    }
+    setRunning(true);
+  }
+})();
+</script>
+
+</body>
+</html>
